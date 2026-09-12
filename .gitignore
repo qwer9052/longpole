@@ -1,0 +1,4 @@
+gobuildwhy
+gobuildwhy.exe
+/dist/
+*.db
