@@ -1,4 +1,4 @@
-# gobuildwhy — design spec
+# longpole — design spec
 
 Date: 2026-09-12
 Status: approved, ready for implementation planning
@@ -8,7 +8,7 @@ Status: approved, ready for implementation planning
 Why was my Go build slow? One command, honest numbers.
 
 ```
-gobuildwhy go build ./...
+longpole go build ./...
 ```
 
 ## Problem
@@ -178,7 +178,7 @@ wall clock per action would have blamed the wrong thing. Reporting work time
 `-o /dev/null` (and `NUL` on Windows) is special-cased and works, but the link
 action re-runs on every invocation because there is no target binary to compare
 build IDs against. Measured: rebuilding to a stable `-o` path with nothing
-changed ran 0 of 196 subprocesses; with `-o NUL` it ran 1 of 195. When gobuildwhy
+changed ran 0 of 196 subprocesses; with `-o NUL` it ran 1 of 195. When longpole
 needs to force a build for analysis, it must use a stable temp output path, not
 `/dev/null`.
 
@@ -205,15 +205,15 @@ needs to force a build for analysis, it must use a stable temp output path, not
 ## Command surface
 
 ```
-gobuildwhy go build ./...              wrap, run, report
-gobuildwhy go test ./...               same
-gobuildwhy --explain go build ./...    also record hash inputs (slower)
-gobuildwhy log                         list recent runs
-gobuildwhy diff [A] [B]                compare two runs
-gobuildwhy why <package>               why did this package rebuild
+longpole go build ./...              wrap, run, report
+longpole go test ./...               same
+longpole --explain go build ./...    also record hash inputs (slower)
+longpole log                         list recent runs
+longpole diff [A] [B]                compare two runs
+longpole why <package>               why did this package rebuild
 ```
 
-`gobuildwhy <anything>` where the first argument is `go` is treated as a wrap.
+`longpole <anything>` where the first argument is `go` is treated as a wrap.
 Everything else is a subcommand. This keeps the common case free of ceremony.
 
 ## Output
@@ -240,7 +240,7 @@ Everything else is a subcommand. This keeps the common case free of ceremony.
   biggest package
     example.com/app/internal/bigpkg  2.0s, 84 files, blocks 47 packages
 
-  saved as run #7.  compare:  gobuildwhy diff 6 7
+  saved as run #7.  compare:  longpole diff 6 7
 ```
 
 ### Fully cached build
@@ -276,7 +276,7 @@ it, the diff still reports what rebuilt and what it cost.
 ### why
 
 ```
-  gobuildwhy why example.com/app/api
+  longpole why example.com/app/api
 
   last build: rebuilt, 0.9s
   ActionID   Ncj38CzRJXZZ4v3xvrBq  (was LJaA78fjRHyrIOReFVuZ in run 6)
@@ -293,7 +293,7 @@ it, the diff still reports what rebuilt and what it cost.
 ## Causality without a baseline
 
 The hash-input diff needs a previous run to compare against. To stay useful on
-the very first `--explain` run, gobuildwhy computes the causality chain **within
+the very first `--explain` run, longpole computes the causality chain **within
 a single build**.
 
 A package's hash inputs contain `import <path> <contentID>` for each dependency.
@@ -311,7 +311,7 @@ changed" or "GOAMD64 changed". Baselines accumulate automatically from every
 
 | Package | Responsibility | Depends on |
 |---|---|---|
-| `cmd/gobuildwhy` | CLI dispatch, subprocess wrapping, flag injection, signal passthrough | model, store, report |
+| `cmd/longpole` | CLI dispatch, subprocess wrapping, flag injection, signal passthrough | model, store, report |
 | `internal/actiongraph` | Parse the JSON graph. Handles Go 1.21-1.27 including the 1.26 `build check cache` split. Path normalization. | stdlib only |
 | `internal/hashlog` | Stream-parse `gocachehash` stderr into per-block ordered input lines. Never buffers. | stdlib only |
 | `internal/model` | `Run`, `Action`. Derives work time, wall time, queue wait, cached flag, kind. The single place the cache-hit rule lives. | actiongraph |
@@ -350,9 +350,9 @@ The wrapper must never be the reason a build behaves differently.
   diagnostic noise the user did not ask to see. Every other stderr line is
   forwarded unchanged. A line is treated as hash output only if it matches the
   `HASH[`, `HASH subkey `, or `HASH <file>: <64 hex>` shapes exactly; anything
-  else passes through. This is the one place gobuildwhy alters child output, and
+  else passes through. This is the one place longpole alters child output, and
   it does so only for output it caused by setting the GODEBUG itself.
-- Signals (Ctrl-C) are forwarded to the child; gobuildwhy waits for it to exit.
+- Signals (Ctrl-C) are forwarded to the child; longpole waits for it to exit.
 - If analysis fails for any reason, print a one-line warning and still exit with
   the child's code. A broken profiler must not break a build.
 - If the user already passed `-debug-actiongraph`, honor theirs and read that
@@ -362,7 +362,7 @@ The wrapper must never be the reason a build behaves differently.
 
 ## Storage
 
-Location: `os.UserCacheDir()/gobuildwhy/runs.db`. SQLite via `modernc.org/sqlite`
+Location: `os.UserCacheDir()/longpole/runs.db`. SQLite via `modernc.org/sqlite`
 so there is no cgo and cross-compilation stays trivial.
 
 Tables:
@@ -437,8 +437,19 @@ captured from Go 1.27.1 on Windows.
 - Adds under 200 ms of overhead to a build without `--explain`.
 - Never changes a build's exit code or output.
 
-## Open question deferred to implementation
+## Name
 
-The name. `gobuildwhy` is descriptive and searchable but awkward to type. Revisit
-before the first public release; it costs nothing to change now and is expensive
-later.
+`longpole`, after "the long pole in the tent" — the item that determines the
+schedule. That is exactly what the tool finds and reports: the critical path.
+
+Chosen 2026-09-12, replacing the working name `gobuildwhy`. Checked free on both
+GitHub and pkg.go.dev at that date. Several obvious alternatives were already
+taken in adjacent domains and were rejected for that reason: `tach` (2.8k-star
+Python dependency tool), `caliper` (Google's Java benchmarking library),
+`whyslow` (an existing profiling utility), `buildprof` (a build file-access
+recorder), `hitch`, `tock`.
+
+Two properties drove the choice. The binary is typed as a prefix on every build,
+so it must be short and must not repeat the word "build". And a distinctive name
+is findable among the many generically named build tools, where `buildwhy` or
+`buildtime` would not be.
