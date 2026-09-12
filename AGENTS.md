@@ -193,6 +193,16 @@ Local differences from Keycloak:
 - No DCO sign-off is required. If a co-author trailer is genuinely needed, use
   `Co-authored-by: qwer9052 <namju@needsoft.co.kr>`.
 
+## License
+
+Apache License 2.0. `LICENSE` carries the full text and `NOTICE` names the
+copyright holder; both ship in any distribution.
+
+Apache 2.0 does not require a per-file header, and longpole does not use one —
+169 lines of boilerplate repeated across a dozen small files buries the code that
+matters. Do not add one. If a file is copied in from another project, keep its
+original header and record the source in `NOTICE`.
+
 ## PR hygiene
 
 - Branch from `main`.
