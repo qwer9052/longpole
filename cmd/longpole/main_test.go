@@ -250,6 +250,64 @@ func TestRunLogShowsScopedRunsNewestFirstAndMarksFailures(t *testing.T) {
 	}
 }
 
+func TestRunDiffComparesTwoMostRecentScopedRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeID, err := db.Save(store.Run{Scope: "target", StartedAt: 1, WallNs: 1_000_000_000}, []model.Action{
+		{Package: "a", Kind: model.KindCompile, Cached: true, ActionID: "before"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Save(store.Run{Scope: "other", StartedAt: 2, WallNs: 9_000_000_000}, nil); err != nil {
+		t.Fatal(err)
+	}
+	afterID, err := db.Save(store.Run{Scope: "target", StartedAt: 3, WallNs: 3_000_000_000}, []model.Action{
+		{Package: "a", Kind: model.KindCompile, Ran: true, WorkNs: 2_000_000_000, ActionID: "after"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if got := runDiffFrom(path, "target", nil, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", got, stderr.String())
+	}
+	out := stdout.String()
+	wantRuns := "run " + strconv.FormatInt(beforeID, 10) + " -> run " + strconv.FormatInt(afterID, 10)
+	if !strings.Contains(out, wantRuns) || !strings.Contains(out, "a") {
+		t.Errorf("diff = %q, want %q and package a", out, wantRuns)
+	}
+}
+
+func TestRunDiffNeedsTwoRunsInScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Save(store.Run{Scope: "target"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if got := runDiffFrom(path, "target", nil, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit code = %d, want 1; stderr = %q", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "need two runs to compare, have 1") {
+		t.Errorf("stderr = %q, want not-enough-runs message", stderr.String())
+	}
+}
+
 type historyErrorStore struct {
 	previousErr error
 	pruneErr    error
