@@ -69,8 +69,11 @@ func TestReportFullyCachedSaysNothingToOptimize(t *testing.T) {
 	if strings.Contains(out, "critical path") {
 		t.Errorf("a fully cached build must not show a critical path; got:\n%s", out)
 	}
-	if !strings.Contains(out, "across 1 action)") {
+	if !strings.Contains(out, "across 1 action;") {
 		t.Errorf("a single cache probe must use singular grammar; got:\n%s", out)
+	}
+	if !strings.Contains(out, "summed cache-probe spans") || !strings.Contains(out, "spans may overlap") {
+		t.Errorf("cache probing must be labelled as summed, potentially overlapping spans; got:\n%s", out)
 	}
 	golden(t, "fully_cached.txt", out)
 }
@@ -102,14 +105,14 @@ func TestReportCriticalPathOmitsCachedActions(t *testing.T) {
 	}
 }
 
-func TestReportLabelsCacheProbeTimeAsWallTime(t *testing.T) {
+func TestReportLabelsCacheProbeTimeAsAggregateOverlappingSpans(t *testing.T) {
 	acts := []model.Action{
 		{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "ran-package", Ran: true, WorkNs: 100_000_000},
 		{ID: 1, Mode: "build check cache", Kind: model.KindCacheProbe, Package: "cached-package", WallNs: 200_000_000},
 	}
 	out := Run(model.Summarize(acts, 300_000_000), acts, Options{TopN: 1, PathN: 1, Cores: 8})
-	if !strings.Contains(out, "cache       0.20s  wall") {
-		t.Errorf("cache probing must be labelled as wall time, not a share of work; got:\n%s", out)
+	if !strings.Contains(out, "span sum") || !strings.Contains(out, "may overlap") {
+		t.Errorf("cache probing must be labelled as summed, potentially overlapping spans; got:\n%s", out)
 	}
 }
 
@@ -134,5 +137,15 @@ func TestReportEmptyGraph(t *testing.T) {
 	out := Run(model.Summarize(nil, 0), nil, Options{TopN: 3, PathN: 3, Cores: 8})
 	if out == "" {
 		t.Error("an empty graph should still produce a line, not nothing")
+	}
+}
+
+func TestReportEmptyGraphLabelsFailedBuild(t *testing.T) {
+	out := Run(model.Summarize(nil, 0), nil, Options{TopN: 3, PathN: 3, Cores: 8, ExitCode: 2})
+	if !strings.Contains(out, "build failed (exit 2)") {
+		t.Errorf("a failed build with no actions must still be labelled; got:\n%s", out)
+	}
+	if !strings.Contains(out, "no build actions recorded") {
+		t.Errorf("a failed build with no actions must explain the empty graph; got:\n%s", out)
 	}
 }

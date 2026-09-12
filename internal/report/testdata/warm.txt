@@ -3,7 +3,7 @@
 
   time went to
     link        0.25s  100%   2 actions
-    cache       2.87s  wall   194 actions
+    cache       2.87s  span sum   194 actions (may overlap)
 
   critical path  0.25s of 0.50s wall (50%)
       0.25s  example.com/lab/cmd/app (link)

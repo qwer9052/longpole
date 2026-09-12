@@ -24,7 +24,11 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	var b strings.Builder
 
 	if s.Actions == 0 {
-		b.WriteString("\n  no build actions recorded\n\n")
+		b.WriteString("\n")
+		if opt.ExitCode != 0 {
+			fmt.Fprintf(&b, "  build failed (exit %d)\n", opt.ExitCode)
+		}
+		b.WriteString("  no build actions recorded\n\n")
 		return b.String()
 	}
 
@@ -41,7 +45,7 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	if s.FullyCached {
 		b.WriteString("\n  nothing to optimize — everything came from cache\n")
 		probe := s.ByKind[model.KindCacheProbe]
-		fmt.Fprintf(&b, "  (%s cache probing across %d %s)\n\n",
+		fmt.Fprintf(&b, "  (%s summed cache-probe spans across %d %s; spans may overlap)\n\n",
 			Dur(probe.WallNs), probe.Count, actionWord(probe.Count))
 		return b.String()
 	}
@@ -63,19 +67,22 @@ func writeKinds(b *strings.Builder, s model.Summary) {
 		if !ok || st.Count == 0 {
 			continue
 		}
-		// Cache probes did no subprocess work, so report their wall time without
-		// presenting it as a share of the independent subprocess-work total.
-		amount := st.WorkNs
-		share := Pct(amount, s.WorkNs)
 		if k == model.KindCacheProbe {
-			amount = st.WallNs
-			share = "wall"
+			if st.WallNs == 0 {
+				continue
+			}
+			// Probe spans can overlap, so their sum is neither elapsed time nor a
+			// share of the independent subprocess-work total.
+			fmt.Fprintf(b, "    %-9s %7s  span sum   %d %s (may overlap)\n",
+				k.String(), Dur(st.WallNs), st.Count, actionWord(st.Count))
+			continue
 		}
+		amount := st.WorkNs
 		if amount == 0 {
 			continue
 		}
 		fmt.Fprintf(b, "    %-9s %7s  %4s   %d %s\n",
-			k.String(), Dur(amount), share, st.Count, actionWord(st.Count))
+			k.String(), Dur(amount), Pct(amount, s.WorkNs), st.Count, actionWord(st.Count))
 	}
 }
 

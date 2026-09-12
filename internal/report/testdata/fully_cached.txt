@@ -2,5 +2,5 @@
   build: 3 actions, 0 ran, 2 cached (100%)        0.50s wall
 
   nothing to optimize — everything came from cache
-  (0.35s cache probing across 1 action)
+  (0.35s summed cache-probe spans across 1 action; spans may overlap)
 

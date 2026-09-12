@@ -4,7 +4,7 @@
   time went to
     compile    24.56s   99%   194 actions
     link        0.29s    1%   2 actions
-    cache       1.51s  wall   194 actions
+    cache       1.51s  span sum   194 actions (may overlap)
 
   critical path  5.76s of 12.40s wall (46%)
       1.14s  runtime
