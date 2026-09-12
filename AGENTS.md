@@ -31,6 +31,19 @@ go vet ./...
 gofmt -l .
 ```
 
+CI runs exactly these on `ubuntu-latest` and `windows-latest`, with two
+differences worth knowing before you wonder why a check is missing:
+
+- The build step sets `CGO_ENABLED=0`, which turns the no-cgo rule into a check.
+- `-race` and `gofmt` run on Linux only. The race detector needs cgo, and a
+  Windows runner would need a C toolchain for it; data races are not platform
+  specific. Windows still runs build, vet and the full test suite, which is what
+  catches the platform-specific behavior this tool depends on.
+
+Locally on Windows, `go test ./... -race` fails with "requires cgo" unless you
+have a C compiler. That is expected. Run the plain suite instead and let CI
+cover the race detector.
+
 Regenerate golden report files after an intentional output change:
 
 ```bash
