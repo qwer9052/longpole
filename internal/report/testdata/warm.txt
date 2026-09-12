@@ -13,4 +13,3 @@
 
   slowest packages
       0.25s  example.com/lab/cmd/app (link), blocks 1
-

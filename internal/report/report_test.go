@@ -149,3 +149,26 @@ func TestReportEmptyGraphLabelsFailedBuild(t *testing.T) {
 		t.Errorf("a failed build with no actions must explain the empty graph; got:\n%s", out)
 	}
 }
+
+func TestReportEndsWithOneNewline(t *testing.T) {
+	ran := []model.Action{{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "one", Ran: true, WorkNs: 100_000_000}}
+	cached := []model.Action{{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "one", Cached: true}}
+	tests := []struct {
+		name string
+		out  string
+	}{
+		{name: "empty", out: Run(model.Summarize(nil, 0), nil, Options{})},
+		{name: "failed empty", out: Run(model.Summarize(nil, 0), nil, Options{ExitCode: 2})},
+		{name: "fully cached", out: Run(model.Summarize(cached, 200_000_000), cached, Options{})},
+		{name: "detailed", out: Run(model.Summarize(ran, 200_000_000), ran, Options{TopN: 1, PathN: 1})},
+		{name: "saved", out: Run(model.Summarize(ran, 200_000_000), ran, Options{TopN: 1, PathN: 1, RunID: 2})},
+		{name: "comparison", out: Run(model.Summarize(ran, 200_000_000), ran, Options{TopN: 1, PathN: 1, RunID: 2, PrevID: 1})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.HasSuffix(tt.out, "\n") || strings.HasSuffix(tt.out, "\n\n") {
+				t.Errorf("report must end with exactly one newline; got %q", tt.out)
+			}
+		})
+	}
+}

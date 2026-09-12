@@ -28,7 +28,7 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 		if opt.ExitCode != 0 {
 			fmt.Fprintf(&b, "  build failed (exit %d)\n", opt.ExitCode)
 		}
-		b.WriteString("  no build actions recorded\n\n")
+		b.WriteString("  no build actions recorded\n")
 		return b.String()
 	}
 
@@ -45,7 +45,7 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	if s.FullyCached {
 		b.WriteString("\n  nothing to optimize — everything came from cache\n")
 		probe := s.ByKind[model.KindCacheProbe]
-		fmt.Fprintf(&b, "  (%s summed cache-probe spans across %d %s; spans may overlap)\n\n",
+		fmt.Fprintf(&b, "  (%s summed cache-probe spans across %d %s; spans may overlap)\n",
 			Dur(probe.WallNs), probe.Count, actionWord(probe.Count))
 		return b.String()
 	}
@@ -146,15 +146,14 @@ func writeBiggest(b *strings.Builder, acts []model.Action, opt Options) {
 
 func writeFooter(b *strings.Builder, opt Options) {
 	if opt.RunID == 0 {
-		b.WriteString("\n")
 		return
 	}
 	if opt.PrevID > 0 {
-		fmt.Fprintf(b, "\n  saved as run #%d.  compare:  longpole diff %d %d\n\n",
+		fmt.Fprintf(b, "\n  saved as run #%d.  compare:  longpole diff %d %d\n",
 			opt.RunID, opt.PrevID, opt.RunID)
 		return
 	}
-	fmt.Fprintf(b, "\n  saved as run #%d\n\n", opt.RunID)
+	fmt.Fprintf(b, "\n  saved as run #%d\n", opt.RunID)
 }
 
 // pkgName renders an action's identity. Link actions share a package name with
