@@ -1,0 +1,21 @@
+
+  build: 392 actions, 195 ran, 1 cached (1%)        12.40s wall
+
+  time went to
+    compile    24.56s   99%   194 actions
+    link        0.29s    1%   2 actions
+    cache       1.51s  span sum   194 actions (may overlap)
+
+  critical path  5.76s of 12.40s wall (46%)
+      1.14s  runtime
+      0.57s  math/big
+      0.37s  crypto/tls
+    + 24 more
+
+  parallelism  2.0x of 8 cores  (work 24.84s / wall 12.40s)
+    ! 6.43s summed queue wait; 29 actions waited over 50ms
+
+  slowest packages
+      1.14s  runtime, blocks 289
+      0.71s  net, blocks 25
+      0.68s  reflect, blocks 91
