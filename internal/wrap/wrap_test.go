@@ -141,6 +141,36 @@ func TestRunPreservesFailedExitAndStderrForwardingError(t *testing.T) {
 	}
 }
 
+func TestRunDrainsStderrAfterForwardingError(t *testing.T) {
+	if os.Getenv("LONGPOLE_WRAP_TEST_LARGE_STDERR") == "1" {
+		chunk := make([]byte, 32<<10)
+		chunk[len(chunk)-1] = '\n'
+		for written := 0; written < 4<<20; written += len(chunk) {
+			if _, err := os.Stderr.Write(chunk); err != nil {
+				os.Exit(9)
+			}
+		}
+		os.Exit(7)
+	}
+
+	tee := NewStderrTee(errorWriter{}, nil)
+	res, err := Run(
+		context.Background(),
+		[]string{os.Args[0], "-test.run=^TestRunDrainsStderrAfterForwardingError$"},
+		[]string{"LONGPOLE_WRAP_TEST_LARGE_STDERR=1"},
+		tee,
+	)
+	if err != nil {
+		t.Fatalf("Run returned a fatal error after the child exited: %v", err)
+	}
+	if res.ExitCode != 7 {
+		t.Errorf("exit code = %d, want 7 after draining child stderr", res.ExitCode)
+	}
+	if res.WaitErr == nil || !strings.Contains(res.WaitErr.Error(), "stderr") {
+		t.Errorf("wait error = %v, want a contextual non-fatal stderr error", res.WaitErr)
+	}
+}
+
 func TestStderrTeeForwardsEverythingByDefault(t *testing.T) {
 	var out strings.Builder
 	tee := NewStderrTee(&out, nil)

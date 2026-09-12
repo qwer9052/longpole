@@ -80,6 +80,8 @@ func ExistingGraphPath(argv []string) (string, bool) {
 
 // Result is what the wrapped command produced.
 type Result struct {
+	// ExitCode is the child's numeric exit code. On Unix, signal termination is
+	// normalized to the shell convention 128+signal.
 	ExitCode int
 	WallNs   int64
 	// WaitErr reports a non-fatal stdio-copy failure after ProcessState made the
@@ -126,7 +128,7 @@ func Run(ctx context.Context, argv []string, extraEnv []string, stderr *StderrTe
 		}
 		return res, fmt.Errorf("wait %s: process state unavailable", argv[0])
 	}
-	res.ExitCode = cmd.ProcessState.ExitCode()
+	res.ExitCode = processExitCode(cmd.ProcessState)
 	if stderr != nil && stderr.writeErr != nil {
 		res.WaitErr = fmt.Errorf("copy stderr from %s: %w", argv[0], stderr.writeErr)
 	}

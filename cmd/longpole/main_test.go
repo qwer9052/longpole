@@ -70,3 +70,53 @@ func TestRunWrapExistingGraphFlagDoesNotNeedTempDirectory(t *testing.T) {
 		t.Errorf("exit code = %d, want child exit code 1", got)
 	}
 }
+
+func TestRunWrapSkipsStaleExistingGraph(t *testing.T) {
+	graphPath := filepath.Join(t.TempDir(), "actiongraph.json")
+	if err := os.WriteFile(graphPath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readStderr, writeStderr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writeStderr
+	defer func() { os.Stderr = originalStderr }()
+
+	goName := "go"
+	if runtime.GOOS == "windows" {
+		goName += ".exe"
+	}
+	goPath := filepath.Join(runtime.GOROOT(), "bin", goName)
+	got := runWrap(context.Background(), []string{
+		goPath,
+		"build",
+		"-debug-actiongraph=" + graphPath,
+		"./does-not-exist",
+	})
+	writeStderr.Close()
+	stderr, err := io.ReadAll(readStderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readStderr.Close()
+
+	if got != 1 {
+		t.Errorf("exit code = %d, want child exit code 1", got)
+	}
+	if !strings.Contains(string(stderr), "was not updated; skipping analysis") {
+		t.Errorf("stderr = %q, want stale graph warning", stderr)
+	}
+	if strings.Contains(string(stderr), "no build actions recorded") {
+		t.Errorf("stale graph was analyzed: %q", stderr)
+	}
+	graph, err := os.ReadFile(graphPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(graph) != "[]" {
+		t.Errorf("user graph was modified: %q", graph)
+	}
+}

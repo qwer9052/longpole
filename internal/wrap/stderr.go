@@ -27,6 +27,9 @@ func NewStderrTee(out io.Writer, onLine func([]byte) bool) *StderrTee {
 
 func (t *StderrTee) Write(p []byte) (int, error) {
 	n := len(p)
+	if t.writeErr != nil {
+		return n, nil
+	}
 	t.buf.Write(p)
 	for {
 		i := bytes.IndexByte(t.buf.Bytes(), '\n')
@@ -38,9 +41,12 @@ func (t *StderrTee) Write(p []byte) (int, error) {
 		if t.OnLine != nil && t.OnLine(line) {
 			continue
 		}
+		if t.writeErr != nil {
+			continue
+		}
 		if _, err := t.Out.Write(line); err != nil {
 			t.recordWriteError(err)
-			return n, err
+			continue
 		}
 	}
 	return n, nil
@@ -66,5 +72,6 @@ func (t *StderrTee) Flush() error {
 func (t *StderrTee) recordWriteError(err error) {
 	if err != nil && t.writeErr == nil {
 		t.writeErr = err
+		t.buf.Reset()
 	}
 }
