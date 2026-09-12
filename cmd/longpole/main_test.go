@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/qwer9052/longpole/internal/model"
+	"github.com/qwer9052/longpole/internal/store"
+	"github.com/qwer9052/longpole/internal/wrap"
 )
 
 func TestRunWrapSetupFailureStillRunsChild(t *testing.T) {
@@ -119,4 +125,144 @@ func TestRunWrapSkipsStaleExistingGraph(t *testing.T) {
 	if string(graph) != "[]" {
 		t.Errorf("user graph was modified: %q", graph)
 	}
+}
+
+func TestFinishRunPersistenceFailureKeepsExitAndReport(t *testing.T) {
+	graphPath := filepath.Join("..", "..", "internal", "actiongraph", "testdata", "cold.json")
+	var stderr strings.Builder
+
+	got := finishRun(
+		context.Background(),
+		graphPath,
+		[]string{"go", "build", "./..."},
+		wrap.Result{ExitCode: 7, WallNs: 100_000_000},
+		func(context.Context, []string, wrap.Result, model.Summary, []model.Action) (int64, int64, error) {
+			return 0, 0, errors.New("database unavailable")
+		},
+		&stderr,
+	)
+
+	if got != 7 {
+		t.Errorf("exit code = %d, want child exit code 7", got)
+	}
+	if !strings.Contains(stderr.String(), "could not record this run: database unavailable") {
+		t.Errorf("stderr = %q, want persistence warning", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "build failed (exit 7)") {
+		t.Errorf("stderr = %q, want failed-build report", stderr.String())
+	}
+}
+
+func TestFinishRunPassesContextToPersister(t *testing.T) {
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "scope context")
+	graphPath := filepath.Join("..", "..", "internal", "actiongraph", "testdata", "cold.json")
+	var gotValue any
+
+	finishRun(
+		ctx,
+		graphPath,
+		[]string{"go", "build", "./..."},
+		wrap.Result{},
+		func(ctx context.Context, _ []string, _ wrap.Result, _ model.Summary, _ []model.Action) (int64, int64, error) {
+			gotValue = ctx.Value(contextKey{})
+			return 1, 0, nil
+		},
+		io.Discard,
+	)
+
+	if gotValue != "scope context" {
+		t.Errorf("context value = %v", gotValue)
+	}
+}
+
+func TestSaveRunSurfacesHistoryErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		db   *historyErrorStore
+		want string
+	}{
+		{
+			name: "previous",
+			db:   &historyErrorStore{previousErr: errors.New("previous unavailable")},
+			want: "previous unavailable",
+		},
+		{
+			name: "prune",
+			db:   &historyErrorStore{pruneErr: errors.New("prune unavailable")},
+			want: "prune unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := saveRun(tt.db, store.Run{Scope: "scope"}, nil)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunLogShowsScopedRunsNewestFirstAndMarksFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID, err := db.Save(store.Run{
+		Scope: "target", StartedAt: 1, Command: "go build ./old", WallNs: 1_000_000,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := db.Save(store.Run{
+		Scope: "other", StartedAt: 2, Command: "go build ./other", WallNs: 2_000_000,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID, err := db.Save(store.Run{
+		Scope: "target", StartedAt: 3, Command: "go test ./new", WallNs: 3_000_000, ExitCode: 1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if got := runLogFrom(path, "target", &stdout, &stderr); got != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", got, stderr.String())
+	}
+	out := stdout.String()
+	newPos := strings.Index(out, "#"+strconv.FormatInt(newID, 10))
+	oldPos := strings.Index(out, "#"+strconv.FormatInt(oldID, 10))
+	if newPos < 0 || oldPos < 0 || newPos >= oldPos {
+		t.Errorf("log order = %q, want run #%d before #%d", out, newID, oldID)
+	}
+	if strings.Contains(out, "#"+strconv.FormatInt(otherID, 10)) || strings.Contains(out, "./other") {
+		t.Errorf("log includes other scope: %q", out)
+	}
+	if !strings.Contains(out, "go test ./new  failed") {
+		t.Errorf("log = %q, want failed label", out)
+	}
+}
+
+type historyErrorStore struct {
+	previousErr error
+	pruneErr    error
+}
+
+func (s *historyErrorStore) Save(store.Run, []model.Action) (int64, error) {
+	return 1, nil
+}
+
+func (s *historyErrorStore) Previous(string, int64) (int64, error) {
+	return 0, s.previousErr
+}
+
+func (s *historyErrorStore) Prune(string, int) error {
+	return s.pruneErr
 }
