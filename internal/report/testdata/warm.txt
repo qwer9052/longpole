@@ -1,0 +1,16 @@
+
+  build: 392 actions, 1 ran, 195 cached (99%)        0.50s wall
+
+  time went to
+    link        0.25s  100%   2 actions
+    cache       2.87s  wall   194 actions
+
+  critical path  0.25s of 0.50s wall (50%)
+      0.25s  example.com/lab/cmd/app (link)
+
+  parallelism  0.5x of 8 cores  (work 0.25s / wall 0.50s)
+    ! 0.98s queue wait across 5 actions — the graph is narrow here
+
+  slowest packages
+      0.25s  example.com/lab/cmd/app (link), blocks 1
+
