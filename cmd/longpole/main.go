@@ -6,10 +6,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/qwer9052/longpole/internal/actiongraph"
@@ -110,8 +110,14 @@ func runWrap(ctx context.Context, argv []string) int {
 			return res.ExitCode
 		}
 	}
-	if err := analyze(graphPath, argv, res); err != nil {
-		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
+	return finishRun(graphPath, argv, res, persist, os.Stderr)
+}
+
+type persistFunc func([]string, wrap.Result, model.Summary, []model.Action) (int64, int64, error)
+
+func finishRun(graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) int {
+	if err := analyze(graphPath, argv, res, record, stderr); err != nil {
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
 	}
 	return res.ExitCode
 }
@@ -140,7 +146,7 @@ func (before graphFileState) updatedBy(after graphFileState) bool {
 	return !before.exists || before.size != after.size || !before.modTime.Equal(after.modTime)
 }
 
-func analyze(graphPath string, argv []string, res wrap.Result) error {
+func analyze(graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) error {
 	raw, err := actiongraph.ParseFile(graphPath)
 	if err != nil {
 		return fmt.Errorf("could not read the action graph: %w", err)
@@ -156,14 +162,20 @@ func analyze(graphPath string, argv []string, res wrap.Result) error {
 
 	// Persistence is best-effort: a report the user can read matters more than
 	// a row in a database they may never query.
-	if id, prev, err := persist(argv, res, s, acts); err != nil {
-		fmt.Fprintf(os.Stderr, "longpole: could not record this run: %v\n", err)
+	if id, prev, err := record(argv, res, s, acts); err != nil {
+		fmt.Fprintf(stderr, "longpole: could not record this run: %v\n", err)
 	} else {
 		opt.RunID, opt.PrevID = id, prev
 	}
 
-	fmt.Fprint(os.Stderr, report.Run(s, acts, opt))
+	fmt.Fprint(stderr, report.Run(s, acts, opt))
 	return nil
+}
+
+type runStore interface {
+	Save(store.Run, []model.Action) (int64, error)
+	Previous(string, int64) (int64, error)
+	Prune(string, int) error
 }
 
 func persist(argv []string, res wrap.Result, s model.Summary, acts []model.Action) (id, prev int64, err error) {
@@ -175,10 +187,15 @@ func persist(argv []string, res wrap.Result, s model.Summary, acts []model.Actio
 	if err != nil {
 		return 0, 0, err
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil && err == nil {
+			id, prev = 0, 0
+			err = fmt.Errorf("close run store: %w", closeErr)
+		}
+	}()
 
 	scope := wrap.CurrentScope()
-	id, err = db.Save(store.Run{
+	return saveRun(db, store.Run{
 		Scope:     scope,
 		StartedAt: time.Now().UnixNano(),
 		Command:   joinArgs(argv),
@@ -192,11 +209,20 @@ func persist(argv []string, res wrap.Result, s model.Summary, acts []model.Actio
 		Cached:    s.Cached,
 		ExitCode:  res.ExitCode,
 	}, acts)
+}
+
+func saveRun(db runStore, r store.Run, acts []model.Action) (id, prev int64, err error) {
+	id, err = db.Save(r, acts)
 	if err != nil {
 		return 0, 0, err
 	}
-	prev, _ = db.Previous(scope, id)
-	_ = db.Prune(scope, keepRuns)
+	prev, err = db.Previous(r.Scope, id)
+	if err != nil {
+		return 0, 0, fmt.Errorf("look up previous run: %w", err)
+	}
+	if err := db.Prune(r.Scope, keepRuns); err != nil {
+		return 0, 0, fmt.Errorf("prune run history: %w", err)
+	}
 	return id, prev, nil
 }
 
@@ -206,34 +232,43 @@ func runLog() int {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 1
 	}
+	return runLogFrom(path, wrap.CurrentScope(), os.Stdout, os.Stderr)
+}
+
+func runLogFrom(path, scope string, stdout, stderr io.Writer) (exitCode int) {
 	db, err := store.Open(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
 		return 1
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil && exitCode == 0 {
+			fmt.Fprintf(stderr, "longpole: close run store: %v\n", err)
+			exitCode = 1
+		}
+	}()
 
-	runs, err := db.Recent(wrap.CurrentScope(), 20)
+	runs, err := db.Recent(scope, 20)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
 		return 1
 	}
 	if len(runs) == 0 {
-		fmt.Print("\n  no runs recorded here yet — try:  longpole go build ./...\n\n")
+		fmt.Fprint(stdout, "\n  no runs recorded here yet — try:  longpole go build ./...\n\n")
 		return 0
 	}
 
-	fmt.Println()
+	fmt.Fprintln(stdout)
 	for _, r := range runs {
 		when := time.Unix(0, r.StartedAt).Format("01-02 15:04")
 		status := ""
 		if r.ExitCode != 0 {
 			status = "  failed"
 		}
-		fmt.Printf("  #%-4d %s  %8s  %3d ran %3d cached  %s%s\n",
+		fmt.Fprintf(stdout, "  #%-4d %s  %8s  %3d ran %3d cached  %s%s\n",
 			r.ID, when, report.Dur(r.WallNs), r.Ran, r.Cached, r.Command, status)
 	}
-	fmt.Println()
+	fmt.Fprintln(stdout)
 	return 0
 }
 
@@ -247,5 +282,3 @@ func joinArgs(argv []string) string {
 	}
 	return out
 }
-
-var _ = strconv.Itoa // retained for the diff subcommand added in Task 11
