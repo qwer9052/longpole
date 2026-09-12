@@ -29,7 +29,7 @@ func TestScopeNormalizesWindowsSeparators(t *testing.T) {
 	}
 }
 
-func TestModulePathIgnoresOutputFormattingGOFLAGS(t *testing.T) {
+func TestModulePathIgnoresListingGOFLAGS(t *testing.T) {
 	tests := []struct {
 		name    string
 		goFlags string
@@ -40,11 +40,17 @@ func TestModulePathIgnoresOutputFormattingGOFLAGS(t *testing.T) {
 		{name: "test variants", goFlags: "-test"},
 		{name: "export data", goFlags: "-export"},
 		{name: "compiled files", goFlags: "-compiled"},
+		{name: "find", goFlags: "-find"},
+		{name: "reuse", goFlags: "-reuse=missing-reuse.json"},
+		{name: "updates", goFlags: "-u"},
+		{name: "versions", goFlags: "-versions"},
+		{name: "retracted", goFlags: "-retracted"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GOFLAGS", tt.goFlags)
+			t.Setenv("GOPROXY", "off")
 			if got := modulePath(context.Background()); got != "github.com/qwer9052/longpole" {
 				t.Errorf("module path = %q", got)
 			}

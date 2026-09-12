@@ -45,6 +45,11 @@ func modulePath(ctx context.Context) string {
 		"-test=false",
 		"-export=false",
 		"-compiled=false",
+		"-find=false",
+		"-reuse=",
+		"-u=false",
+		"-versions=false",
+		"-retracted=false",
 	).Output()
 	if err != nil {
 		return ""
