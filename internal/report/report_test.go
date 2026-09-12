@@ -124,6 +124,23 @@ func TestReportUsesSingularAction(t *testing.T) {
 	}
 }
 
+func TestReportSeparatesSummedQueueWaitFromHeavyWaiterCount(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "heavy", Ran: true, WorkNs: 100_000_000, QueueNs: 60_000_000},
+		{ID: 1, Mode: "build", Kind: model.KindCompile, Package: "short", Ran: true, WorkNs: 100_000_000, QueueNs: 40_000_000},
+	}
+	out := Run(model.Summarize(acts, 200_000_000), acts, Options{TopN: 2, PathN: 2, Cores: 8})
+	if !strings.Contains(out, "0.10s summed queue wait") {
+		t.Errorf("queue duration must include both short and heavy waiters; got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 action waited over 50ms") {
+		t.Errorf("heavy-waiter count must be reported separately; got:\n%s", out)
+	}
+	if strings.Contains(out, "graph is narrow") {
+		t.Errorf("queue wait alone does not prove the graph is narrow; got:\n%s", out)
+	}
+}
+
 func TestReportFailedBuild(t *testing.T) {
 	acts := fixture(t, "failed.json")
 	s := model.Summarize(acts, 50_000_000)

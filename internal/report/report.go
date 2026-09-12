@@ -123,7 +123,7 @@ func writeParallelism(b *strings.Builder, s model.Summary, opt Options) {
 	fmt.Fprintf(b, "\n  parallelism  %.1fx of %d cores  (work %s / wall %s)\n",
 		s.Parallelism, opt.Cores, Dur(s.WorkNs), Dur(s.WallNs))
 	if s.QueueHeavy > 0 {
-		fmt.Fprintf(b, "    ! %s queue wait across %d %s — the graph is narrow here\n",
+		fmt.Fprintf(b, "    ! %s summed queue wait; %d %s waited over 50ms\n",
 			Dur(s.QueueNs), s.QueueHeavy, actionWord(s.QueueHeavy))
 	}
 }

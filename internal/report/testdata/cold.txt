@@ -13,7 +13,7 @@
     + 24 more
 
   parallelism  2.0x of 8 cores  (work 24.84s / wall 12.40s)
-    ! 6.43s queue wait across 29 actions — the graph is narrow here
+    ! 6.43s summed queue wait; 29 actions waited over 50ms
 
   slowest packages
       1.14s  runtime, blocks 289

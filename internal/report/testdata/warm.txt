@@ -9,7 +9,7 @@
       0.25s  example.com/lab/cmd/app (link)
 
   parallelism  0.5x of 8 cores  (work 0.25s / wall 0.50s)
-    ! 0.98s queue wait across 5 actions — the graph is narrow here
+    ! 0.98s summed queue wait; 5 actions waited over 50ms
 
   slowest packages
       0.25s  example.com/lab/cmd/app (link), blocks 1
