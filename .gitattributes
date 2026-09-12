@@ -1,0 +1,25 @@
+# Normalize every text file to LF, in the repository and in the working tree.
+#
+# Without this a Windows checkout converts to CRLF: a fresh clone of this repo
+# produced a README 107 bytes larger than the source, one byte per line. The
+# golden-file tests in internal/report/testdata compare rendered output byte for
+# byte, so that difference makes them pass on Linux and fail on Windows, with a
+# diff that looks identical on screen.
+* text=auto eol=lf
+
+# Test fixtures and golden files are compared exactly. Pin them explicitly so a
+# future attribute change cannot reach them.
+*.json text eol=lf
+*.txt  text eol=lf
+
+# Go tooling expects LF.
+*.go   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+
+# Never transform these.
+*.exe binary
+*.png binary
+*.jpg binary
+*.gz  binary
+*.zip binary
