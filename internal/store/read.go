@@ -10,8 +10,14 @@ import (
 
 // Load returns a run and its actions.
 func (s *Store) Load(id int64) (Run, []model.Action, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Run{}, nil, fmt.Errorf("begin load: %w", err)
+	}
+	defer tx.Rollback()
+
 	var r Run
-	err := s.db.QueryRow(`
+	err = tx.QueryRow(`
 		SELECT id, scope, started_at, command, go_version, goos, goarch,
 		       cores, wall_ns, work_ns, ran, cached, exit_code
 		FROM runs WHERE id = ?`, id).
@@ -25,7 +31,7 @@ func (s *Store) Load(id int64) (Run, []model.Action, error) {
 		return Run{}, nil, fmt.Errorf("load run: %w", err)
 	}
 
-	rows, err := s.db.Query(`
+	rows, err := tx.Query(`
 		SELECT graph_id, mode, kind, package, deps, action_id, build_id,
 		       work_ns, wall_ns, queue_ns, cached, ran
 		FROM actions WHERE run_id = ? ORDER BY idx`, id)
@@ -53,6 +59,12 @@ func (s *Store) Load(id int64) (Run, []model.Action, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return r, nil, fmt.Errorf("iterate actions: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return r, nil, fmt.Errorf("close action rows: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return r, nil, fmt.Errorf("commit load: %w", err)
 	}
 	return r, acts, nil
 }

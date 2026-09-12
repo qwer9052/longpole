@@ -2,8 +2,12 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
+	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -69,6 +73,121 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if want := sampleActions(); !reflect.DeepEqual(acts, want) {
 		t.Errorf("actions = %#v, want %#v", acts, want)
+	}
+}
+
+func TestLoadUsesSingleSnapshot(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "runs.db")
+	reader, err := Open(p)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close()
+	writer, err := Open(p)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	defer writer.Close()
+
+	action := model.Action{ID: 7, Mode: "build", Kind: model.KindCompile,
+		Package: "example.com/snapshot", ActionID: "SNAP", Ran: true}
+	id, err := reader.Save(sampleRun("snapshot"), []model.Action{action})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 2_000; i++ {
+			select {
+			case <-stop:
+				done <- nil
+				return
+			default:
+			}
+
+			tx, err := writer.db.Begin()
+			if err != nil {
+				done <- fmt.Errorf("begin delete: %w", err)
+				return
+			}
+			if _, err := tx.Exec(`DELETE FROM runs WHERE id = ?`, id); err != nil {
+				tx.Rollback()
+				done <- fmt.Errorf("delete run: %w", err)
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				done <- fmt.Errorf("commit delete: %w", err)
+				return
+			}
+			runtime.Gosched()
+
+			tx, err = writer.db.Begin()
+			if err != nil {
+				done <- fmt.Errorf("begin insert: %w", err)
+				return
+			}
+			_, err = tx.Exec(`
+				INSERT INTO runs
+					(id, scope, started_at, command, go_version, goos, goarch,
+					 cores, wall_ns, work_ns, ran, cached, exit_code)
+				VALUES (?, 'snapshot', 1, 'go build', 'go1.27', 'windows', 'amd64',
+				        8, 1, 1, 1, 0, 0)`, id)
+			if err != nil {
+				tx.Rollback()
+				done <- fmt.Errorf("insert run: %w", err)
+				return
+			}
+			_, err = tx.Exec(`
+				INSERT INTO actions
+					(run_id, idx, graph_id, mode, kind, package, deps, action_id,
+					 build_id, work_ns, wall_ns, queue_ns, cached, ran)
+				VALUES (?, 0, 7, 'build', 1, 'example.com/snapshot', 'null', 'SNAP',
+				        '', 0, 0, 0, 0, 1)`, id)
+			if err != nil {
+				tx.Rollback()
+				done <- fmt.Errorf("insert action: %w", err)
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				done <- fmt.Errorf("commit insert: %w", err)
+				return
+			}
+			runtime.Gosched()
+		}
+		done <- nil
+	}()
+
+	loads := 0
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("writer: %v", err)
+			}
+			if loads == 0 {
+				t.Fatal("no complete loads observed")
+			}
+			return
+		default:
+		}
+
+		_, acts, err := reader.Load(id)
+		if err != nil {
+			if !strings.Contains(err.Error(), fmt.Sprintf("no run #%d", id)) {
+				close(stop)
+				<-done
+				t.Fatalf("load: %v", err)
+			}
+			continue
+		}
+		loads++
+		if len(acts) != 1 || acts[0].ActionID != "SNAP" {
+			close(stop)
+			<-done
+			t.Fatalf("load returned run with actions %#v", acts)
+		}
 	}
 }
 
@@ -264,6 +383,75 @@ func TestOpenEnablesForeignKeysOnNewConnections(t *testing.T) {
 	}
 	if enabled != 1 {
 		t.Errorf("foreign_keys = %d on replacement connection, want 1", enabled)
+	}
+}
+
+func TestSQLiteFileDSNEscapesQuestionMark(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "runs?#%.db")
+	dsn, err := sqliteFileDSN(p)
+	if err != nil {
+		t.Fatalf("construct DSN: %v", err)
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	want, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatalf("absolute path: %v", err)
+	}
+	got := u.Path
+	if runtime.GOOS == "windows" {
+		got = strings.TrimPrefix(got, "/")
+	}
+	if got != filepath.ToSlash(want) {
+		t.Errorf("DSN path = %q, want %q", got, filepath.ToSlash(want))
+	}
+	if u.Query().Get("_foreign_keys") != "on" {
+		t.Errorf("foreign key parameter = %q, want on", u.Query().Get("_foreign_keys"))
+	}
+}
+
+func TestOpenRoundTripsReservedPath(t *testing.T) {
+	name := "runs#%.db"
+	if runtime.GOOS != "windows" {
+		name = "runs?#%.db"
+	}
+	p := filepath.Join(t.TempDir(), name)
+	s, err := Open(p)
+	if err != nil {
+		t.Fatalf("open reserved path: %v", err)
+	}
+	id, err := s.Save(sampleRun("reserved"), sampleActions())
+	if err != nil {
+		s.Close()
+		t.Fatalf("save reserved path: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close reserved path: %v", err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("stat reserved path: %v", err)
+	}
+
+	s, err = Open(p)
+	if err != nil {
+		t.Fatalf("reopen reserved path: %v", err)
+	}
+	defer s.Close()
+	_, got, err := s.Load(id)
+	if err != nil {
+		t.Fatalf("load reserved path: %v", err)
+	}
+	if want := sampleActions(); !reflect.DeepEqual(got, want) {
+		t.Errorf("actions = %#v, want %#v", got, want)
+	}
+	var foreignKeys int
+	if err := s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("read foreign_keys: %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Errorf("foreign_keys = %d, want 1", foreignKeys)
 	}
 }
 

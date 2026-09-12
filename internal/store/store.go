@@ -7,8 +7,10 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -81,9 +83,11 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	// Foreign-key enforcement is connection-local in SQLite. Put it in the DSN
-	// so database/sql cannot open a replacement connection without it.
-	db, err := sql.Open("sqlite", path+"?_foreign_keys=on&_journal_mode=wal")
+	dsn, err := sqliteFileDSN(path)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -104,6 +108,25 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func sqliteFileDSN(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve database path: %w", err)
+	}
+	uriPath := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	u := url.URL{Scheme: "file", Path: uriPath}
+	query := u.Query()
+	// Foreign-key enforcement is connection-local in SQLite. Put it in the DSN
+	// so database/sql cannot open a replacement connection without it.
+	query.Set("_foreign_keys", "on")
+	query.Set("_journal_mode", "wal")
+	u.RawQuery = query.Encode()
+	return u.String(), nil
 }
 
 func migrateActions(db *sql.DB) error {
