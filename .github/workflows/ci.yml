@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# CI only reads the code. Nothing here writes to the repository.
+permissions:
+  contents: read
+
+# Supersede an in-flight run when the branch is pushed again.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    # Standard GitHub-hosted runners. On a public repository these are free and
+    # unmetered. Larger and GPU runners are billed even on public repositories,
+    # so this workflow must never switch to one.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is not optional here. longpole reads Go toolchain output whose
+        # shape differs by platform: CmdUser and CmdSys have ~15.6 ms
+        # granularity on Windows, action graph paths use backslashes, and the
+        # golden report files are byte-compared. A Linux-only matrix would miss
+        # all of it.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          # Single source of truth: the version floor lives in go.mod.
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Build without cgo
+        # longpole ships as a single cross-compiled binary and must stay pure
+        # Go. Building with cgo disabled turns that rule into a check.
+        env:
+          CGO_ENABLED: 0
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test with the race detector
+        # The race detector needs cgo, and a Windows runner would need a C
+        # toolchain for it. Data races are not platform specific, so detecting
+        # them on Linux is enough; Windows still runs the full suite above.
+        if: matrix.os == 'ubuntu-latest'
+        run: go test ./... -race
+
+      - name: Check gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            echo
+            echo "Run: gofmt -w ."
+            exit 1
+          fi
+          echo "gofmt: clean"
