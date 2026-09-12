@@ -1,10 +1,14 @@
 package wrap
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const moduleLookupTimeout = 5 * time.Second
 
 // Scope identifies a project so that run history and diffs never mix unrelated
 // builds. It is the module path plus the working directory, because the same
@@ -16,18 +20,21 @@ func Scope(module, dir string) string {
 
 // CurrentScope derives the scope for the process's working directory. A
 // missing module is not an error: builds outside a module are still builds.
-func CurrentScope() string {
+func CurrentScope(ctx context.Context) string {
 	dir, err := os.Getwd()
 	if err != nil {
 		dir = "unknown"
 	}
-	return Scope(modulePath(), dir)
+	return Scope(modulePath(ctx), dir)
 }
 
 // modulePath asks the go command for the current module, returning "" when
 // there is not one.
-func modulePath() string {
-	out, err := exec.Command("go", "list", "-m").Output()
+func modulePath(ctx context.Context) string {
+	ctx, cancel := context.WithTimeout(ctx, moduleLookupTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "go", "list", "-m", "-json=false", "-f={{.Path}}").Output()
 	if err != nil {
 		return ""
 	}

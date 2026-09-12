@@ -132,10 +132,11 @@ func TestFinishRunPersistenceFailureKeepsExitAndReport(t *testing.T) {
 	var stderr strings.Builder
 
 	got := finishRun(
+		context.Background(),
 		graphPath,
 		[]string{"go", "build", "./..."},
 		wrap.Result{ExitCode: 7, WallNs: 100_000_000},
-		func([]string, wrap.Result, model.Summary, []model.Action) (int64, int64, error) {
+		func(context.Context, []string, wrap.Result, model.Summary, []model.Action) (int64, int64, error) {
 			return 0, 0, errors.New("database unavailable")
 		},
 		&stderr,

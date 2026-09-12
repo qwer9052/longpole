@@ -1,6 +1,9 @@
 package wrap
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestScopeCombinesModuleAndDir(t *testing.T) {
 	got := Scope("example.com/app", "/home/x/app")
@@ -23,5 +26,33 @@ func TestScopeNormalizesWindowsSeparators(t *testing.T) {
 	b := Scope("m", "C:/Users/x/app")
 	if a != b {
 		t.Errorf("%q != %q", a, b)
+	}
+}
+
+func TestModulePathIgnoresOutputFormattingGOFLAGS(t *testing.T) {
+	tests := []struct {
+		name    string
+		goFlags string
+	}{
+		{name: "json", goFlags: "-json"},
+		{name: "custom format", goFlags: "-f={{.Dir}}"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GOFLAGS", tt.goFlags)
+			if got := modulePath(context.Background()); got != "github.com/qwer9052/longpole" {
+				t.Errorf("module path = %q", got)
+			}
+		})
+	}
+}
+
+func TestModulePathHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := modulePath(ctx); got != "" {
+		t.Errorf("module path = %q, want empty after cancellation", got)
 	}
 }

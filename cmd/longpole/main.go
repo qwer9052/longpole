@@ -40,7 +40,7 @@ func main() {
 	case "go":
 		os.Exit(runWrap(context.Background(), args))
 	case "log":
-		os.Exit(runLog())
+		os.Exit(runLog(context.Background()))
 	case "-h", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
 		os.Exit(0)
@@ -110,13 +110,13 @@ func runWrap(ctx context.Context, argv []string) int {
 			return res.ExitCode
 		}
 	}
-	return finishRun(graphPath, argv, res, persist, os.Stderr)
+	return finishRun(ctx, graphPath, argv, res, persist, os.Stderr)
 }
 
-type persistFunc func([]string, wrap.Result, model.Summary, []model.Action) (int64, int64, error)
+type persistFunc func(context.Context, []string, wrap.Result, model.Summary, []model.Action) (int64, int64, error)
 
-func finishRun(graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) int {
-	if err := analyze(graphPath, argv, res, record, stderr); err != nil {
+func finishRun(ctx context.Context, graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) int {
+	if err := analyze(ctx, graphPath, argv, res, record, stderr); err != nil {
 		fmt.Fprintf(stderr, "longpole: %v\n", err)
 	}
 	return res.ExitCode
@@ -146,7 +146,7 @@ func (before graphFileState) updatedBy(after graphFileState) bool {
 	return !before.exists || before.size != after.size || !before.modTime.Equal(after.modTime)
 }
 
-func analyze(graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) error {
+func analyze(ctx context.Context, graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) error {
 	raw, err := actiongraph.ParseFile(graphPath)
 	if err != nil {
 		return fmt.Errorf("could not read the action graph: %w", err)
@@ -162,7 +162,7 @@ func analyze(graphPath string, argv []string, res wrap.Result, record persistFun
 
 	// Persistence is best-effort: a report the user can read matters more than
 	// a row in a database they may never query.
-	if id, prev, err := record(argv, res, s, acts); err != nil {
+	if id, prev, err := record(ctx, argv, res, s, acts); err != nil {
 		fmt.Fprintf(stderr, "longpole: could not record this run: %v\n", err)
 	} else {
 		opt.RunID, opt.PrevID = id, prev
@@ -178,7 +178,7 @@ type runStore interface {
 	Prune(string, int) error
 }
 
-func persist(argv []string, res wrap.Result, s model.Summary, acts []model.Action) (id, prev int64, err error) {
+func persist(ctx context.Context, argv []string, res wrap.Result, s model.Summary, acts []model.Action) (id, prev int64, err error) {
 	path, err := store.DefaultPath()
 	if err != nil {
 		return 0, 0, err
@@ -194,7 +194,7 @@ func persist(argv []string, res wrap.Result, s model.Summary, acts []model.Actio
 		}
 	}()
 
-	scope := wrap.CurrentScope()
+	scope := wrap.CurrentScope(ctx)
 	return saveRun(db, store.Run{
 		Scope:     scope,
 		StartedAt: time.Now().UnixNano(),
@@ -226,13 +226,13 @@ func saveRun(db runStore, r store.Run, acts []model.Action) (id, prev int64, err
 	return id, prev, nil
 }
 
-func runLog() int {
+func runLog(ctx context.Context) int {
 	path, err := store.DefaultPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 1
 	}
-	return runLogFrom(path, wrap.CurrentScope(), os.Stdout, os.Stderr)
+	return runLogFrom(path, wrap.CurrentScope(ctx), os.Stdout, os.Stderr)
 }
 
 func runLogFrom(path, scope string, stdout, stderr io.Writer) (exitCode int) {
