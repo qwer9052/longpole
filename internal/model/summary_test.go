@@ -25,6 +25,13 @@ func TestFullyCachedRequiresCachedWorkAndNoRanActions(t *testing.T) {
 	}
 }
 
+func TestNonRanNonCachedWorkIsNotFullyCached(t *testing.T) {
+	s := Summarize([]Action{{Kind: KindCompile}}, 0)
+	if s.FullyCached {
+		t.Error("work that was neither cached nor ran must not be fully cached")
+	}
+}
+
 func TestColdBuildIsNotFullyCached(t *testing.T) {
 	s := Summarize(loadFixture(t, "cold.json"), 0)
 	if s.FullyCached {

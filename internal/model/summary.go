@@ -47,11 +47,7 @@ func Summarize(acts []Action, wallNs int64) Summary {
 		WallNs:  wallNs,
 		ByKind:  make(map[Kind]KindStat),
 	}
-	workActions := 0
 	for _, a := range acts {
-		if a.Kind == KindCompile || a.Kind == KindLink {
-			workActions++
-		}
 		if a.Ran {
 			s.Ran++
 		}
@@ -71,7 +67,7 @@ func Summarize(acts []Action, wallNs int64) Summary {
 		s.ByKind[a.Kind] = st
 	}
 
-	s.FullyCached = workActions > 0 && s.Ran == 0
+	s.FullyCached = s.Cached > 0 && s.Ran == 0
 	if wallNs > 0 {
 		s.Parallelism = float64(s.WorkNs) / float64(wallNs)
 	}
