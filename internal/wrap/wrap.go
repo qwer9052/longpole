@@ -6,11 +6,11 @@
 package wrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
 	"time"
 )
@@ -47,13 +47,8 @@ func Check(argv []string) (string, error) {
 // their path is used: the go command rejects a repeated flag, and silently
 // overriding an explicit choice would be worse than not helping.
 func Inject(argv []string, graphPath string) ([]string, string) {
-	for i, a := range argv {
-		if strings.HasPrefix(a, flagName+"=") {
-			return argv, strings.TrimPrefix(a, flagName+"=")
-		}
-		if a == flagName && i+1 < len(argv) {
-			return argv, argv[i+1]
-		}
+	if path, ok := ExistingGraphPath(argv); ok {
+		return argv, path
 	}
 	if len(argv) < 2 {
 		return argv, graphPath
@@ -65,21 +60,44 @@ func Inject(argv []string, graphPath string) ([]string, string) {
 	return out, graphPath
 }
 
+// ExistingGraphPath returns a user-supplied action graph path. Arguments after
+// -args or -- belong to the built program or test binary, not to the go command.
+func ExistingGraphPath(argv []string) (string, bool) {
+	for i := 2; i < len(argv); i++ {
+		a := argv[i]
+		if a == "-args" || a == "--" {
+			break
+		}
+		if strings.HasPrefix(a, flagName+"=") {
+			return strings.TrimPrefix(a, flagName+"="), true
+		}
+		if a == flagName && i+1 < len(argv) {
+			return argv[i+1], true
+		}
+	}
+	return "", false
+}
+
 // Result is what the wrapped command produced.
 type Result struct {
 	ExitCode int
 	WallNs   int64
+	// WaitErr reports a non-fatal stdio-copy failure after ProcessState made the
+	// child's exit code authoritative.
+	WaitErr error
 }
 
-// Run executes argv with stdio connected to this process and signals forwarded.
-// It returns the child's exit code rather than an error for a non-zero exit:
-// a failing build is a normal outcome, not a longpole failure.
-func Run(argv []string, extraEnv []string, stderr *StderrTee) (Result, error) {
+// Run executes argv with stdio connected to this process. Interrupt handling is
+// platform-specific: it forwards signals where os.Process supports that, while
+// Windows relies on the console delivering Ctrl-C to both processes. It returns
+// the child's exit code rather than an error for a non-zero exit: a failing
+// build is a normal outcome, not a longpole failure.
+func Run(ctx context.Context, argv []string, extraEnv []string, stderr *StderrTee) (Result, error) {
 	if len(argv) == 0 {
 		return Result{}, fmt.Errorf("no command to run")
 	}
 
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	if stderr != nil {
@@ -96,35 +114,25 @@ func Run(argv []string, extraEnv []string, stderr *StderrTee) (Result, error) {
 		return Result{}, fmt.Errorf("start %s: %w", argv[0], err)
 	}
 
-	// Forward interrupts so Ctrl-C reaches the build, then let the child decide
-	// when to exit. Killing it ourselves would lose the action graph.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt)
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case s := <-sigs:
-				_ = cmd.Process.Signal(s)
-			case <-done:
-				return
-			}
-		}
-	}()
-
+	stopForwarding := forwardInterrupts(cmd.Process)
 	err := cmd.Wait()
-	close(done)
-	signal.Stop(sigs)
+	stopForwarding()
 	wall := time.Since(start).Nanoseconds()
 
 	res := Result{WallNs: wall}
+	if cmd.ProcessState == nil {
+		if err != nil {
+			return res, fmt.Errorf("wait %s: %w", argv[0], err)
+		}
+		return res, fmt.Errorf("wait %s: process state unavailable", argv[0])
+	}
+	res.ExitCode = cmd.ProcessState.ExitCode()
 	if err != nil {
 		var ee *exec.ExitError
 		if errorsAs(err, &ee) {
-			res.ExitCode = ee.ExitCode()
 			return res, nil
 		}
-		return res, fmt.Errorf("wait %s: %w", argv[0], err)
+		res.WaitErr = fmt.Errorf("wait %s: %w", argv[0], err)
 	}
 	return res, nil
 }

@@ -1,6 +1,7 @@
 package wrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -55,6 +56,23 @@ func TestRespectsExistingFlagSpaceForm(t *testing.T) {
 	}
 }
 
+func TestInjectIgnoresGraphFlagAfterArgumentBoundary(t *testing.T) {
+	for _, boundary := range []string{"-args", "--"} {
+		t.Run(boundary, func(t *testing.T) {
+			got, path := Inject(
+				[]string{"go", "test", "./pkg", boundary, "-debug-actiongraph=mine.json"},
+				"/tmp/ours.json",
+			)
+			if path != "/tmp/ours.json" {
+				t.Errorf("path = %q, want the injected path", path)
+			}
+			if got[2] != "-debug-actiongraph=/tmp/ours.json" {
+				t.Errorf("go flag was not injected before the argument boundary: %v", got)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSubcommandIsReported(t *testing.T) {
 	if _, err := Check([]string{"go", "mod", "tidy"}); err == nil {
 		t.Error("expected an error for a subcommand that builds nothing")
@@ -75,20 +93,27 @@ func TestCheckRejectsTooFewArgs(t *testing.T) {
 	}
 }
 
-func TestRunWrapsWaitErrors(t *testing.T) {
+func TestRunPreservesSuccessfulExitWhenStderrForwardingFails(t *testing.T) {
 	if os.Getenv("LONGPOLE_WRAP_TEST_STDERR") == "1" {
 		fmt.Fprintln(os.Stderr, "child stderr")
 		return
 	}
 
 	tee := NewStderrTee(errorWriter{}, nil)
-	_, err := Run(
-		[]string{os.Args[0], "-test.run=^TestRunWrapsWaitErrors$"},
+	res, err := Run(
+		context.Background(),
+		[]string{os.Args[0], "-test.run=^TestRunPreservesSuccessfulExitWhenStderrForwardingFails$"},
 		[]string{"LONGPOLE_WRAP_TEST_STDERR=1"},
 		tee,
 	)
-	if err == nil || !strings.Contains(err.Error(), "wait ") {
-		t.Fatalf("error = %v, want wait operation context", err)
+	if err != nil {
+		t.Fatalf("Run returned a fatal error after the child exited: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", res.ExitCode)
+	}
+	if res.WaitErr == nil || !strings.Contains(res.WaitErr.Error(), "wait ") {
+		t.Errorf("wait error = %v, want a non-fatal warning with operation context", res.WaitErr)
 	}
 }
 

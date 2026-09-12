@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,34 +32,49 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	os.Exit(runWrap(args))
+	os.Exit(runWrap(context.Background(), args))
 }
 
 // runWrap profiles a go command. Its contract: return the go command's exit
 // code, whatever happens to the profiling.
-func runWrap(argv []string) int {
+func runWrap(ctx context.Context, argv []string) int {
 	if _, err := wrap.Check(argv); err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 2
 	}
 
-	tmp, err := os.MkdirTemp("", "longpole-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
-		return 2
+	cmdArgs := argv
+	graphPath, userGraph := wrap.ExistingGraphPath(argv)
+	var setupErr error
+	if !userGraph {
+		tmp, err := os.MkdirTemp("", "longpole-")
+		if err != nil {
+			setupErr = fmt.Errorf("create action graph temporary directory: %w", err)
+		} else {
+			defer os.RemoveAll(tmp)
+			graphPath = filepath.Join(tmp, "actiongraph.json")
+			cmdArgs, graphPath = wrap.Inject(argv, graphPath)
+		}
 	}
-	defer os.RemoveAll(tmp)
 
-	graphPath := filepath.Join(tmp, "actiongraph.json")
-	cmdArgs, graphPath := wrap.Inject(argv, graphPath)
-
-	res, err := wrap.Run(cmdArgs, nil, nil)
+	res, err := wrap.Run(ctx, cmdArgs, nil, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 1
 	}
 
 	// From here on, nothing may change the exit code.
+	if setupErr != nil {
+		fmt.Fprintf(os.Stderr, "longpole: %v\n", setupErr)
+		return res.ExitCode
+	}
+	if graphPath == "" {
+		fmt.Fprintln(os.Stderr, "longpole: action graph path is empty; skipping analysis")
+		return res.ExitCode
+	}
+	if res.WaitErr != nil {
+		fmt.Fprintf(os.Stderr, "longpole: %v\n", res.WaitErr)
+	}
 	if err := analyze(graphPath, res); err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 	}
