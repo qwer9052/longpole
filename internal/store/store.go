@@ -56,9 +56,11 @@ CREATE INDEX IF NOT EXISTS runs_scope_id ON runs(scope, id DESC);
 CREATE TABLE IF NOT EXISTS actions (
 	run_id     INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
 	idx        INTEGER NOT NULL,
+	graph_id   INTEGER NOT NULL,
 	mode       TEXT    NOT NULL,
 	kind       INTEGER NOT NULL,
 	package    TEXT    NOT NULL,
+	deps       TEXT    NOT NULL,
 	action_id  TEXT    NOT NULL,
 	build_id   TEXT    NOT NULL,
 	work_ns    INTEGER NOT NULL,
@@ -79,7 +81,9 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	db, err := sql.Open("sqlite", path)
+	// Foreign-key enforcement is connection-local in SQLite. Put it in the DSN
+	// so database/sql cannot open a replacement connection without it.
+	db, err := sql.Open("sqlite", path+"?_foreign_keys=on&_journal_mode=wal")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -87,7 +91,7 @@ func Open(path string) (*Store, error) {
 	// this avoids "database is locked" under concurrent builds.
 	db.SetMaxOpenConns(1)
 
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`); err != nil {
+	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("configure database: %w", err)
 	}

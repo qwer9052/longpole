@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/qwer9052/longpole/internal/model"
@@ -25,7 +26,7 @@ func (s *Store) Load(id int64) (Run, []model.Action, error) {
 	}
 
 	rows, err := s.db.Query(`
-		SELECT idx, mode, kind, package, action_id, build_id,
+		SELECT graph_id, mode, kind, package, deps, action_id, build_id,
 		       work_ns, wall_ns, queue_ns, cached, ran
 		FROM actions WHERE run_id = ? ORDER BY idx`, id)
 	if err != nil {
@@ -34,12 +35,16 @@ func (s *Store) Load(id int64) (Run, []model.Action, error) {
 	defer rows.Close()
 
 	var acts []model.Action
-	for rows.Next() {
+	for i := 0; rows.Next(); i++ {
 		var a model.Action
 		var kind, cached, ran int
-		if err := rows.Scan(&a.ID, &a.Mode, &kind, &a.Package, &a.ActionID,
+		var deps string
+		if err := rows.Scan(&a.ID, &a.Mode, &kind, &a.Package, &deps, &a.ActionID,
 			&a.BuildID, &a.WorkNs, &a.WallNs, &a.QueueNs, &cached, &ran); err != nil {
 			return r, nil, fmt.Errorf("scan action: %w", err)
+		}
+		if err := json.Unmarshal([]byte(deps), &a.Deps); err != nil {
+			return r, nil, fmt.Errorf("decode action %d dependencies: %w", i, err)
 		}
 		a.Kind = model.Kind(kind)
 		a.Cached = cached == 1
@@ -54,6 +59,9 @@ func (s *Store) Load(id int64) (Run, []model.Action, error) {
 
 // Recent returns up to limit runs in a scope, newest first.
 func (s *Store) Recent(scope string, limit int) ([]Run, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("recent limit must be non-negative: %d", limit)
+	}
 	rows, err := s.db.Query(`
 		SELECT id, scope, started_at, command, go_version, goos, goarch,
 		       cores, wall_ns, work_ns, ran, cached, exit_code

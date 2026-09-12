@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -36,17 +37,21 @@ func (s *Store) Save(r Run, acts []model.Action) (int64, error) {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO actions
-			(run_id, idx, mode, kind, package, action_id, build_id,
-			 work_ns, wall_ns, queue_ns, cached, ran)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+			(run_id, idx, graph_id, mode, kind, package, deps, action_id,
+			 build_id, work_ns, wall_ns, queue_ns, cached, ran)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return 0, fmt.Errorf("prepare action insert: %w", err)
 	}
 	defer stmt.Close()
 
 	for i, a := range acts {
-		if _, err := stmt.Exec(id, i, a.Mode, int(a.Kind), a.Package,
-			a.ActionID, a.BuildID, a.WorkNs, a.WallNs, a.QueueNs,
+		deps, err := json.Marshal(a.Deps)
+		if err != nil {
+			return 0, fmt.Errorf("encode action %d dependencies: %w", i, err)
+		}
+		if _, err := stmt.Exec(id, i, a.ID, a.Mode, int(a.Kind), a.Package,
+			string(deps), a.ActionID, a.BuildID, a.WorkNs, a.WallNs, a.QueueNs,
 			boolInt(a.Cached), boolInt(a.Ran)); err != nil {
 			return 0, fmt.Errorf("insert action %d: %w", i, err)
 		}
@@ -60,17 +65,30 @@ func (s *Store) Save(r Run, acts []model.Action) (int64, error) {
 
 // Prune deletes all but the newest keep runs in a scope.
 func (s *Store) Prune(scope string, keep int) error {
-	_, err := s.db.Exec(`
+	if keep < 0 {
+		return fmt.Errorf("prune keep must be non-negative: %d", keep)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin prune: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		DELETE FROM runs
 		WHERE scope = ?
 		  AND id NOT IN (
 			SELECT id FROM runs WHERE scope = ? ORDER BY id DESC LIMIT ?
 		  )`, scope, scope, keep)
 	if err != nil {
-		return fmt.Errorf("prune: %w", err)
+		return fmt.Errorf("delete old runs: %w", err)
 	}
-	// Foreign keys are on, so action rows cascade. Reclaim the space.
-	_, _ = s.db.Exec(`DELETE FROM actions WHERE run_id NOT IN (SELECT id FROM runs)`)
+	if _, err := tx.Exec(`DELETE FROM actions WHERE run_id NOT IN (SELECT id FROM runs)`); err != nil {
+		return fmt.Errorf("remove orphaned actions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit prune: %w", err)
+	}
 	return nil
 }
 
