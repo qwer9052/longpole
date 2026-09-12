@@ -53,7 +53,7 @@ go build -o longpole.exe ./cmd/longpole
 - `docs/superpowers/plans/2026-09-12-longpole.md` — the implementation plan,
   including a "Critical domain knowledge" section that is required reading.
 - `docs/ROADMAP.md` — what is in v1, what is deferred, and why.
-- `research/` — the market scan that selected this project.
+- `internal/actiongraph/testdata/` — real captured build graphs, described in the README in that directory.
 
 Code entry points:
 

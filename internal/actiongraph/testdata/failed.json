@@ -1,0 +1,45 @@
+[
+	{
+		"ID": 0,
+		"Mode": "go build",
+		"Package": "",
+		"Deps": [
+			1
+		],
+		"Priority": 2,
+		"TimeReady": "2026-09-12T15:03:13.7030226+09:00",
+		"TimeStart": "2026-09-12T15:03:13.7030226+09:00",
+		"TimeDone": "2026-09-12T15:03:13.7030226+09:00",
+		"Cmd": null
+	},
+	{
+		"ID": 1,
+		"Mode": "build",
+		"Package": "example.com/lab/bad",
+		"Deps": [
+			2
+		],
+		"Objdir": "C:\\Users\\ron\\AppData\\Local\\Temp\\go-build3414881588\\b001\\",
+		"Priority": 1,
+		"NeedBuild": true,
+		"ActionID": "S7x4FXsFpIfZTLIIz8aj",
+		"TimeReady": "2026-09-12T15:03:13.6809577+09:00",
+		"TimeStart": "2026-09-12T15:03:13.6814698+09:00",
+		"TimeDone": "2026-09-12T15:03:13.7030226+09:00",
+		"Cmd": [
+			"\"C:\\\\Users\\\\ron\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ron-Desktop-think\\\\78d92873-87a4-4d7c-9a12-59f39b166769\\\\scratchpad\\\\gbw\\\\dl\\\\go\\\\pkg\\\\tool\\\\windows_amd64\\\\compile.exe\" -o \"C:\\\\Users\\\\ron\\\\AppData\\\\Local\\\\Temp\\\\go-build3414881588\\\\b001\\\\_pkg_.a\" -trimpath \"C:\\\\Users\\\\ron\\\\AppData\\\\Local\\\\Temp\\\\go-build3414881588\\\\b001=\u003e\" -p example.com/lab/bad -lang=go1.27 -complete -buildid S7x4FXsFpIfZTLIIz8aj/S7x4FXsFpIfZTLIIz8aj -goversion go1.27.1 -c=12 -nolocalimports -importcfg \"C:\\\\Users\\\\ron\\\\AppData\\\\Local\\\\Temp\\\\go-build3414881588\\\\b001\\\\importcfg\" -pack \"C:\\\\Users\\\\ron\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ron-Desktop-think\\\\78d92873-87a4-4d7c-9a12-59f39b166769\\\\scratchpad\\\\gbw\\\\lab\\\\bad\\\\bad.go\""
+		],
+		"CmdReal": 19972800,
+		"CmdUser": 15625000
+	},
+	{
+		"ID": 2,
+		"Mode": "build check cache",
+		"Package": "example.com/lab/bad",
+		"Objdir": "C:\\Users\\ron\\AppData\\Local\\Temp\\go-build3414881588\\b001\\",
+		"TimeReady": "2026-09-12T15:03:13.6613091+09:00",
+		"TimeStart": "2026-09-12T15:03:13.6613091+09:00",
+		"TimeDone": "2026-09-12T15:03:13.6809577+09:00",
+		"Cmd": null
+	}
+]

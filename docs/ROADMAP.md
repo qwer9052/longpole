@@ -1,7 +1,7 @@
 # longpole 기능 목록과 로드맵
 
 조사 과정에서 제안하고 검토한 기능을 전부 정리한 문서입니다.
-근거는 `research/` 아래 세 문서와 `docs/superpowers/specs/2026-09-12-longpole-design.md`에 있습니다.
+근거는 `docs/superpowers/specs/2026-09-12-longpole-design.md`에 있습니다. 시장 조사 원본은 저장소에 포함하지 않습니다.
 
 상태 표기
 
