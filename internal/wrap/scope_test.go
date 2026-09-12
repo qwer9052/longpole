@@ -36,6 +36,10 @@ func TestModulePathIgnoresOutputFormattingGOFLAGS(t *testing.T) {
 	}{
 		{name: "json", goFlags: "-json"},
 		{name: "custom format", goFlags: "-f={{.Dir}}"},
+		{name: "dependencies", goFlags: "-deps"},
+		{name: "test variants", goFlags: "-test"},
+		{name: "export data", goFlags: "-export"},
+		{name: "compiled files", goFlags: "-compiled"},
 	}
 
 	for _, tt := range tests {

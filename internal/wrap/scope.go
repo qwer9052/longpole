@@ -34,7 +34,18 @@ func modulePath(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, moduleLookupTimeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "go", "list", "-m", "-json=false", "-f={{.Path}}").Output()
+	// GOFLAGS may contain list-only flags that change output or conflict with
+	// -m. Command-line overrides keep the scope stable without discarding
+	// module-selection flags such as -mod or -modfile.
+	out, err := exec.CommandContext(ctx, "go", "list",
+		"-m",
+		"-json=false",
+		"-f={{.Path}}",
+		"-deps=false",
+		"-test=false",
+		"-export=false",
+		"-compiled=false",
+	).Output()
 	if err != nil {
 		return ""
 	}

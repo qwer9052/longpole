@@ -153,6 +153,29 @@ func TestFinishRunPersistenceFailureKeepsExitAndReport(t *testing.T) {
 	}
 }
 
+func TestFinishRunPassesContextToPersister(t *testing.T) {
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "scope context")
+	graphPath := filepath.Join("..", "..", "internal", "actiongraph", "testdata", "cold.json")
+	var gotValue any
+
+	finishRun(
+		ctx,
+		graphPath,
+		[]string{"go", "build", "./..."},
+		wrap.Result{},
+		func(ctx context.Context, _ []string, _ wrap.Result, _ model.Summary, _ []model.Action) (int64, int64, error) {
+			gotValue = ctx.Value(contextKey{})
+			return 1, 0, nil
+		},
+		io.Discard,
+	)
+
+	if gotValue != "scope context" {
+		t.Errorf("context value = %v", gotValue)
+	}
+}
+
 func TestSaveRunSurfacesHistoryErrors(t *testing.T) {
 	tests := []struct {
 		name string
