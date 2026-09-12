@@ -73,6 +73,12 @@ func Parse(r io.Reader) ([]Action, error) {
 	if _, err := dec.Token(); err != nil {
 		return nil, fmt.Errorf("read closing token: %w", err)
 	}
+	if tok, err := dec.Token(); err != io.EOF {
+		if err != nil {
+			return nil, fmt.Errorf("read after action graph: %w", err)
+		}
+		return nil, fmt.Errorf("unexpected token after action graph: %v", tok)
+	}
 	return acts, nil
 }
 

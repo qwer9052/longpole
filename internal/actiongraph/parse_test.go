@@ -123,6 +123,38 @@ func TestParseEmptyArray(t *testing.T) {
 	}
 }
 
+func TestParseRejectsTrailingValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "trailing garbage",
+			input:   "[] garbage",
+			wantErr: true,
+		},
+		{
+			name:    "second JSON value",
+			input:   "[] []",
+			wantErr: true,
+		},
+		{
+			name:  "trailing whitespace",
+			input: "[] \n\t ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(stringReader(tt.input))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Parse(%q) error = %v, wantErr %t", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 type sr struct {
 	s string
 	i int
