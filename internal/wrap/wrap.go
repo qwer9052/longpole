@@ -127,12 +127,17 @@ func Run(ctx context.Context, argv []string, extraEnv []string, stderr *StderrTe
 		return res, fmt.Errorf("wait %s: process state unavailable", argv[0])
 	}
 	res.ExitCode = cmd.ProcessState.ExitCode()
+	if stderr != nil && stderr.writeErr != nil {
+		res.WaitErr = fmt.Errorf("copy stderr from %s: %w", argv[0], stderr.writeErr)
+	}
 	if err != nil {
 		var ee *exec.ExitError
 		if errorsAs(err, &ee) {
 			return res, nil
 		}
-		res.WaitErr = fmt.Errorf("wait %s: %w", argv[0], err)
+		if res.WaitErr == nil {
+			res.WaitErr = fmt.Errorf("wait %s: %w", argv[0], err)
+		}
 	}
 	return res, nil
 }

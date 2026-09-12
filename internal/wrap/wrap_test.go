@@ -112,8 +112,32 @@ func TestRunPreservesSuccessfulExitWhenStderrForwardingFails(t *testing.T) {
 	if res.ExitCode != 0 {
 		t.Errorf("exit code = %d, want 0", res.ExitCode)
 	}
-	if res.WaitErr == nil || !strings.Contains(res.WaitErr.Error(), "wait ") {
-		t.Errorf("wait error = %v, want a non-fatal warning with operation context", res.WaitErr)
+	if res.WaitErr == nil || !strings.Contains(res.WaitErr.Error(), "stderr") {
+		t.Errorf("wait error = %v, want a contextual non-fatal stderr error", res.WaitErr)
+	}
+}
+
+func TestRunPreservesFailedExitAndStderrForwardingError(t *testing.T) {
+	if os.Getenv("LONGPOLE_WRAP_TEST_FAILED_STDERR") == "1" {
+		fmt.Fprintln(os.Stderr, "child stderr")
+		os.Exit(7)
+	}
+
+	tee := NewStderrTee(errorWriter{}, nil)
+	res, err := Run(
+		context.Background(),
+		[]string{os.Args[0], "-test.run=^TestRunPreservesFailedExitAndStderrForwardingError$"},
+		[]string{"LONGPOLE_WRAP_TEST_FAILED_STDERR=1"},
+		tee,
+	)
+	if err != nil {
+		t.Fatalf("Run returned a fatal error after the child exited: %v", err)
+	}
+	if res.ExitCode != 7 {
+		t.Errorf("exit code = %d, want 7", res.ExitCode)
+	}
+	if res.WaitErr == nil || !strings.Contains(res.WaitErr.Error(), "stderr") {
+		t.Errorf("wait error = %v, want a contextual non-fatal stderr error", res.WaitErr)
 	}
 }
 

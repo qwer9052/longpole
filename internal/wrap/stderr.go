@@ -16,7 +16,8 @@ type StderrTee struct {
 	Out    io.Writer
 	OnLine func([]byte) bool // return true to swallow the line
 
-	buf bytes.Buffer
+	buf      bytes.Buffer
+	writeErr error
 }
 
 // NewStderrTee returns a tee writing through to out.
@@ -38,6 +39,7 @@ func (t *StderrTee) Write(p []byte) (int, error) {
 			continue
 		}
 		if _, err := t.Out.Write(line); err != nil {
+			t.recordWriteError(err)
 			return n, err
 		}
 	}
@@ -56,6 +58,13 @@ func (t *StderrTee) Flush() error {
 		return nil
 	}
 	_, err := t.Out.Write(line)
+	t.recordWriteError(err)
 	t.buf.Reset()
 	return err
+}
+
+func (t *StderrTee) recordWriteError(err error) {
+	if err != nil && t.writeErr == nil {
+		t.writeErr = err
+	}
 }
