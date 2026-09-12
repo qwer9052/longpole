@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -279,4 +280,101 @@ func TestOpenIsIdempotent(t *testing.T) {
 		t.Fatalf("reopening an existing database failed: %v", err)
 	}
 	s2.Close()
+}
+
+func TestOpenMigratesLegacyActions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "runs.db")
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE runs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope TEXT NOT NULL,
+			started_at INTEGER NOT NULL,
+			command TEXT NOT NULL,
+			go_version TEXT NOT NULL,
+			goos TEXT NOT NULL,
+			goarch TEXT NOT NULL,
+			cores INTEGER NOT NULL,
+			wall_ns INTEGER NOT NULL,
+			work_ns INTEGER NOT NULL,
+			ran INTEGER NOT NULL,
+			cached INTEGER NOT NULL,
+			exit_code INTEGER NOT NULL
+		);
+		CREATE TABLE actions (
+			run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+			idx INTEGER NOT NULL,
+			mode TEXT NOT NULL,
+			kind INTEGER NOT NULL,
+			package TEXT NOT NULL,
+			action_id TEXT NOT NULL,
+			build_id TEXT NOT NULL,
+			work_ns INTEGER NOT NULL,
+			wall_ns INTEGER NOT NULL,
+			queue_ns INTEGER NOT NULL,
+			cached INTEGER NOT NULL,
+			ran INTEGER NOT NULL,
+			PRIMARY KEY (run_id, idx)
+		);
+		INSERT INTO runs VALUES
+			(1, 'legacy', 123, 'go build', 'go1.26', 'linux', 'amd64', 4,
+			 1000, 900, 1, 0, 0);
+		INSERT INTO actions VALUES
+			(1, 17, 'build', 1, 'example.com/legacy', 'OLD', 'old-build',
+			 900, 1000, 100, 0, 1);
+	`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	s, err := Open(p)
+	if err != nil {
+		t.Fatalf("open for migration: %v", err)
+	}
+	_, legacy, err := s.Load(1)
+	if err != nil {
+		s.Close()
+		t.Fatalf("load migrated action: %v", err)
+	}
+	wantLegacy := []model.Action{{
+		ID: 17, Mode: "build", Kind: model.KindCompile, Package: "example.com/legacy",
+		ActionID: "OLD", BuildID: "old-build", WorkNs: 900, WallNs: 1000,
+		QueueNs: 100, Ran: true,
+	}}
+	if !reflect.DeepEqual(legacy, wantLegacy) {
+		t.Errorf("legacy actions = %#v, want %#v", legacy, wantLegacy)
+	}
+
+	newActions := []model.Action{{
+		ID: 99, Mode: "link", Kind: model.KindLink, Package: "example.com/new",
+		Deps: []int{17}, ActionID: "NEW", BuildID: "new-build", Cached: true,
+	}}
+	id, err := s.Save(sampleRun("legacy"), newActions)
+	if err != nil {
+		s.Close()
+		t.Fatalf("save after migration: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close migrated database: %v", err)
+	}
+
+	s, err = Open(p)
+	if err != nil {
+		t.Fatalf("reopen migrated database: %v", err)
+	}
+	defer s.Close()
+	_, got, err := s.Load(id)
+	if err != nil {
+		t.Fatalf("load after reopening migrated database: %v", err)
+	}
+	if !reflect.DeepEqual(got, newActions) {
+		t.Errorf("new actions = %#v, want %#v", got, newActions)
+	}
 }

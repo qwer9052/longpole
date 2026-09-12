@@ -99,7 +99,62 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
+	if err := migrateActions(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
+}
+
+func migrateActions(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin action schema migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`PRAGMA table_info(actions)`)
+	if err != nil {
+		return fmt.Errorf("inspect action schema: %w", err)
+	}
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan action schema: %w", err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate action schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close action schema rows: %w", err)
+	}
+
+	if !columns["graph_id"] {
+		if _, err := tx.Exec(`ALTER TABLE actions ADD COLUMN graph_id INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add action graph_id column: %w", err)
+		}
+		// The old reader exposed idx as Action.ID, so retain that identity for
+		// rows written before graph_id was persisted separately.
+		if _, err := tx.Exec(`UPDATE actions SET graph_id = idx`); err != nil {
+			return fmt.Errorf("backfill action graph_id: %w", err)
+		}
+	}
+	if !columns["deps"] {
+		if _, err := tx.Exec(`ALTER TABLE actions ADD COLUMN deps TEXT NOT NULL DEFAULT 'null'`); err != nil {
+			return fmt.Errorf("add action deps column: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit action schema migration: %w", err)
+	}
+	return nil
 }
 
 // Close releases the database handle.
