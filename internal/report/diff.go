@@ -52,14 +52,38 @@ func Diff(in DiffInput) string {
 		return b.String()
 	}
 
+	confirmed, ambiguous := splitChanges(changes)
+	if len(confirmed) > 0 {
+		writeChanges(&b, "ran this time, did not run last time", confirmed, in.TopN)
+		writeIdentityNote(&b, confirmed)
+	}
+	if len(ambiguous) > 0 {
+		writeChanges(&b, "ambiguous action variants (not counted as additional work)", ambiguous, in.TopN)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func splitChanges(changes []change) (confirmed, ambiguous []change) {
+	for _, c := range changes {
+		if c.VariantUnknown {
+			ambiguous = append(ambiguous, c)
+		} else {
+			confirmed = append(confirmed, c)
+		}
+	}
+	return confirmed, ambiguous
+}
+
+func writeChanges(b *strings.Builder, heading string, changes []change, topN int) {
 	var totalWork int64
 	for _, c := range changes {
 		totalWork += c.WorkNs
 	}
-	fmt.Fprintf(&b, "\n  ran this time, did not run last time     %d %s, +%s\n",
+	fmt.Fprintf(b, "\n  %s     %d %s, +%s\n", heading,
 		len(changes), actionWord(len(changes)), Dur(totalWork))
 
-	n := in.TopN
+	n := topN
 	if n < 0 {
 		n = 0
 	}
@@ -67,15 +91,11 @@ func Diff(in DiffInput) string {
 		n = len(changes)
 	}
 	for _, c := range changes[:n] {
-		fmt.Fprintf(&b, "    %7s  %s  %s\n", Dur(c.WorkNs), c.Package, previousStatus(c))
+		fmt.Fprintf(b, "    %7s  %s  %s\n", Dur(c.WorkNs), c.Package, previousStatus(c))
 	}
 	if rest := len(changes) - n; rest > 0 {
-		fmt.Fprintf(&b, "    + %d more\n", rest)
+		fmt.Fprintf(b, "    + %d more\n", rest)
 	}
-
-	writeIdentityNote(&b, changes)
-	b.WriteString("\n")
-	return b.String()
 }
 
 // findChanges returns actions that ran in the later build but did not in the
@@ -128,6 +148,7 @@ func findChanges(before, after []model.Action) []change {
 			unmatchedByKey[key] = append(unmatchedByKey[key], i)
 		}
 	}
+	unmatchedAfterByKey := make(map[actionKey][]int, len(after))
 	for i, a := range after {
 		if !isWorkAction(a) {
 			continue
@@ -135,13 +156,14 @@ func findChanges(before, after []model.Action) []change {
 		if _, ok := matches[i]; ok {
 			continue
 		}
-		key := keyFor(a)
-		candidates := unmatchedByKey[key]
-		// A unique remaining candidate is the only evidence strong enough to
-		// describe an identity change. Multiple variants remain ambiguous.
-		if len(candidates) == 1 {
-			matches[i] = candidates[0]
-			unmatchedByKey[key] = nil
+		unmatchedAfterByKey[keyFor(a)] = append(unmatchedAfterByKey[keyFor(a)], i)
+	}
+	for key, afterIndexes := range unmatchedAfterByKey {
+		beforeIndexes := unmatchedByKey[key]
+		// Pair only a one-to-one remainder. More candidates on either side do
+		// not identify a variant, so treating one as changed would be a guess.
+		if len(beforeIndexes) == 1 && len(afterIndexes) == 1 {
+			matches[afterIndexes[0]] = beforeIndexes[0]
 		}
 	}
 

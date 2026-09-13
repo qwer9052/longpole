@@ -169,3 +169,51 @@ func TestDiffDoesNotClaimUnchangedWhenBothRunsRan(t *testing.T) {
 		t.Errorf("runs with changed identities must not be called unchanged; got:\n%s", out)
 	}
 }
+
+func TestDiffLeavesOneToManyVariantsAmbiguous(t *testing.T) {
+	before := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Cached: true, ActionID: "old"},
+	}
+	variants := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 2_000_000_000, ActionID: "first"},
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "second"},
+	}
+	for _, tt := range []struct {
+		name  string
+		after []model.Action
+	}{
+		{name: "original order", after: variants},
+		{name: "reversed order", after: []model.Action{variants[1], variants[0]}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out := Diff(DiffInput{Before: before, After: tt.after, TopN: 5})
+			if !strings.Contains(out, "ambiguous action variants") {
+				t.Errorf("one-to-many variants should be qualified as ambiguous; got:\n%s", out)
+			}
+			if strings.Contains(out, "old ->") {
+				t.Errorf("ambiguous variants must not invent an identity transition; got:\n%s", out)
+			}
+			if strings.Contains(out, "ran this time, did not run last time") {
+				t.Errorf("ambiguous variants must not be counted as confirmed additional work; got:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestDiffLeavesAllRanDuplicateVariantsAmbiguous(t *testing.T) {
+	before := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, ActionID: "old-one"},
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, ActionID: "old-two"},
+	}
+	after := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 2_000_000_000, ActionID: "new-one"},
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "new-two"},
+	}
+	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
+	if !strings.Contains(out, "ambiguous action variants") {
+		t.Errorf("duplicate rebuilt variants should be qualified as ambiguous; got:\n%s", out)
+	}
+	if strings.Contains(out, "ran this time, did not run last time") {
+		t.Errorf("ambiguous rebuilt variants must not be counted as confirmed additional work; got:\n%s", out)
+	}
+}
