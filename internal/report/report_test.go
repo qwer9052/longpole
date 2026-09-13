@@ -125,6 +125,17 @@ func TestReportCriticalPathShowsVetWork(t *testing.T) {
 	if !strings.Contains(out, "pkg") {
 		t.Fatalf("vet work on the critical path should be listed: %s", out)
 	}
+	if !strings.Contains(out, "(vet)") {
+		t.Fatalf("vet critical-path entries should be labelled: %s", out)
+	}
+}
+
+func TestReportKeepsVetActionCount(t *testing.T) {
+	acts := []model.Action{{ID: 0, Kind: model.KindVet, Mode: "vet", Package: "pkg", WorkNs: 50_000_000}}
+	out := Run(model.Summarize(acts, 100_000_000), acts, Options{PathN: 1})
+	if !strings.Contains(out, "1 action") {
+		t.Fatalf("vet row should retain its action count: %s", out)
+	}
 }
 
 func TestReportLabelsRanActionsWithinKindTotals(t *testing.T) {
