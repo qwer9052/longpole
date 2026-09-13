@@ -84,7 +84,7 @@ func TestIsHashLine(t *testing.T) {
 	yes := []string{
 		`HASH[build x]: "a"`,
 		`HASH[build x]`,
-		`HASH subkey abc stdout = def`,
+		`HASH subkey ` + strings.Repeat("0", 64) + ` "stdout" = ` + strings.Repeat("1", 64),
 		`HASH C:\lab\a.go: 2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803`,
 	}
 	for _, line := range yes {
@@ -98,6 +98,9 @@ func TestIsHashLine(t *testing.T) {
 		"bad.go:2:16: declared and not used: x",
 		"HASHER is not a hash line",
 		"HASH file.go: not-a-digest",
+		`HASH[build x]: user message`,
+		`HASH subkey user message`,
+		`HASH subkey ` + strings.Repeat("0", 64) + ` not quoted = ` + strings.Repeat("0", 64),
 		"",
 		"HASH[not closed",
 		"HASH[build x] user output",

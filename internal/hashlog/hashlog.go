@@ -74,11 +74,31 @@ func IsHashLine(line []byte) bool {
 		if end < 0 {
 			return false
 		}
+		if end == 0 {
+			return false
+		}
 		rest := line[len(prefixHash)+end+1:]
-		return len(rest) == 0 || bytes.HasPrefix(rest, []byte(": "))
+		if len(rest) == 0 {
+			return true
+		}
+		if !bytes.HasPrefix(rest, []byte(": ")) {
+			return false
+		}
+		value := rest[2:]
+		return isHex64(value) || isQuoted(value)
 	}
 	if bytes.HasPrefix(line, prefixSubkey) {
-		return len(line) > len(prefixSubkey)
+		rest := line[len(prefixSubkey):]
+		space := bytes.IndexByte(rest, ' ')
+		if space != 64 || !isHex64(rest[:space]) {
+			return false
+		}
+		eq := bytes.LastIndex(rest[space+1:], []byte(" = "))
+		if eq < 1 {
+			return false
+		}
+		eq += space + 1
+		return isQuoted(rest[space+1:eq]) && isHex64(rest[eq+3:])
 	}
 	if !bytes.HasPrefix(line, prefixFile) {
 		return false
@@ -86,6 +106,14 @@ func IsHashLine(line []byte) bool {
 
 	i := bytes.LastIndex(line, []byte(": "))
 	return i > len(prefixFile) && isHex64(line[i+2:])
+}
+
+func isQuoted(value []byte) bool {
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return false
+	}
+	_, err := strconv.Unquote(string(value))
+	return err == nil
 }
 
 func isHex64(value []byte) bool {
