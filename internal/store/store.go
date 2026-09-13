@@ -91,8 +91,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	// One writer at a time. The database is tiny and contention is nil, and
-	// this avoids "database is locked" under concurrent builds.
+	// One connection serializes writes made by this Store. Other longpole
+	// processes have independent pools; their contention waits via the DSN's
+	// busy timeout below.
 	db.SetMaxOpenConns(1)
 
 	if err := db.Ping(); err != nil {
@@ -125,6 +126,7 @@ func sqliteFileDSN(path string) (string, error) {
 	// so database/sql cannot open a replacement connection without it.
 	query.Set("_foreign_keys", "on")
 	query.Set("_journal_mode", "wal")
+	query.Add("_pragma", "busy_timeout(5000)")
 	u.RawQuery = query.Encode()
 	return u.String(), nil
 }

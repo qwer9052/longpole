@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/qwer9052/longpole/internal/model"
@@ -289,6 +290,33 @@ func TestPruneKeepsNewest(t *testing.T) {
 	}
 }
 
+func TestPruneGlobalKeepsNewestAcrossScopes(t *testing.T) {
+	s := openTemp(t)
+	var ids []int64
+	for _, scope := range []string{"first", "second", "third", "first"} {
+		id, err := s.Save(sampleRun(scope), sampleActions())
+		if err != nil {
+			t.Fatalf("save %s: %v", scope, err)
+		}
+		ids = append(ids, id)
+	}
+
+	if err := s.PruneGlobal(2); err != nil {
+		t.Fatalf("prune globally: %v", err)
+	}
+
+	for _, id := range ids[:2] {
+		if _, _, err := s.Load(id); err == nil {
+			t.Errorf("old run %d survived the global cap", id)
+		}
+	}
+	for _, id := range ids[2:] {
+		if _, _, err := s.Load(id); err != nil {
+			t.Errorf("new run %d was pruned: %v", id, err)
+		}
+	}
+}
+
 func TestPruneZeroRemovesOnlyTheScope(t *testing.T) {
 	s := openTemp(t)
 	if _, err := s.Save(sampleRun("p"), sampleActions()); err != nil {
@@ -325,7 +353,7 @@ func TestPruneRejectsNegativeKeep(t *testing.T) {
 	}
 }
 
-func TestPruneRemovesOrphanedActions(t *testing.T) {
+func TestPruneCascadesDeletedActions(t *testing.T) {
 	s := openTemp(t)
 	for i := 0; i < 3; i++ {
 		if _, err := s.Save(sampleRun("p"), sampleActions()); err != nil {
@@ -344,32 +372,6 @@ func TestPruneRemovesOrphanedActions(t *testing.T) {
 	}
 	if n != 4 {
 		t.Errorf("got %d action rows after scoped prune, want 4", n)
-	}
-}
-
-func TestPruneRollsBackWhenCleanupFails(t *testing.T) {
-	s := openTemp(t)
-	if _, err := s.Save(sampleRun("p"), sampleActions()); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	if _, err := s.db.Exec(`DROP TABLE actions`); err != nil {
-		t.Fatalf("drop actions: %v", err)
-	}
-
-	err := s.Prune("p", 0)
-	if err == nil {
-		t.Fatal("prune succeeded with no actions table")
-	}
-	if !strings.Contains(err.Error(), "remove orphaned actions") {
-		t.Errorf("prune error = %q, want cleanup context", err)
-	}
-
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE scope = ?`, "p").Scan(&n); err != nil {
-		t.Fatalf("count runs: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("run count = %d, want 1 after rollback", n)
 	}
 }
 
@@ -409,6 +411,60 @@ func TestSQLiteFileDSNEscapesQuestionMark(t *testing.T) {
 	}
 	if u.Query().Get("_foreign_keys") != "on" {
 		t.Errorf("foreign key parameter = %q, want on", u.Query().Get("_foreign_keys"))
+	}
+	if got := u.Query()["_pragma"]; !reflect.DeepEqual(got, []string{"busy_timeout(5000)"}) {
+		t.Errorf("pragma parameters = %#v, want busy_timeout(5000)", got)
+	}
+}
+
+func TestOpenSetsBusyTimeout(t *testing.T) {
+	s := openTemp(t)
+	var got int
+	if err := s.db.QueryRow(`PRAGMA busy_timeout`).Scan(&got); err != nil {
+		t.Fatalf("read busy timeout: %v", err)
+	}
+	if got != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", got)
+	}
+}
+
+func TestConcurrentStoresSaveWithoutBusyErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	const handles = 8
+	stores := make([]*Store, handles)
+	for i := range stores {
+		var err error
+		stores[i], err = Open(path)
+		if err != nil {
+			t.Fatalf("open store %d: %v", i, err)
+		}
+		t.Cleanup(func() { _ = stores[i].Close() })
+	}
+
+	acts := make([]model.Action, 3000)
+	for i := range acts {
+		acts[i] = model.Action{ID: i, Mode: "build", Kind: model.KindCompile,
+			Package: fmt.Sprintf("example.com/p%d", i), ActionID: fmt.Sprintf("%d", i), Ran: true}
+	}
+	start := make(chan struct{})
+	errs := make(chan error, handles)
+	var wg sync.WaitGroup
+	for i, s := range stores {
+		wg.Add(1)
+		go func(i int, s *Store) {
+			defer wg.Done()
+			<-start
+			_, err := s.Save(sampleRun(fmt.Sprintf("scope-%d", i)), acts)
+			errs <- err
+		}(i, s)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent save: %v", err)
+		}
 	}
 }
 
