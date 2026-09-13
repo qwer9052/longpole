@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/qwer9052/longpole/internal/actiongraph"
@@ -24,6 +25,7 @@ const usage = `longpole — why was my Go build slow?
   longpole go build ./...      profile a build
   longpole go test ./...       profile a test build
   longpole log                 list recent runs
+  longpole diff [A B]          compare two runs (default: the last two)
 `
 
 // keepRuns bounds history per project. Fifty is enough to see a trend and small
@@ -41,6 +43,8 @@ func main() {
 		os.Exit(runWrap(context.Background(), args))
 	case "log":
 		os.Exit(runLog(context.Background()))
+	case "diff":
+		os.Exit(runDiff(context.Background(), args[1:]))
 	case "-h", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
 		os.Exit(0)
@@ -269,6 +273,87 @@ func runLogFrom(path, scope string, stdout, stderr io.Writer) (exitCode int) {
 			r.ID, when, report.Dur(r.WallNs), r.Ran, r.Cached, r.Command, status)
 	}
 	fmt.Fprintln(stdout)
+	return 0
+}
+
+// runDiff compares two runs. With no arguments it compares the two most recent.
+func runDiff(ctx context.Context, args []string) int {
+	path, err := store.DefaultPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
+		return 1
+	}
+	return runDiffFrom(path, wrap.CurrentScope(ctx), args, os.Stdout, os.Stderr)
+}
+
+func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (exitCode int) {
+	db, err := store.Open(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
+		return 1
+	}
+	defer func() {
+		if err := db.Close(); err != nil && exitCode == 0 {
+			fmt.Fprintf(stderr, "longpole: close run store: %v\n", err)
+			exitCode = 1
+		}
+	}()
+
+	var beforeID, afterID int64
+	switch len(args) {
+	case 0:
+		runs, err := db.Recent(scope, 2)
+		if err != nil {
+			fmt.Fprintf(stderr, "longpole: %v\n", err)
+			return 1
+		}
+		if len(runs) < 2 {
+			fmt.Fprintf(stderr,
+				"longpole: need two runs to compare, have %d — run a build again\n", len(runs))
+			return 1
+		}
+		afterID, beforeID = runs[0].ID, runs[1].ID
+	case 2:
+		beforeID, err = strconv.ParseInt(args[0], 10, 64)
+		if err != nil {
+			fmt.Fprintf(stderr, "longpole: %q is not a run number\n", args[0])
+			return 2
+		}
+		afterID, err = strconv.ParseInt(args[1], 10, 64)
+		if err != nil {
+			fmt.Fprintf(stderr, "longpole: %q is not a run number\n", args[1])
+			return 2
+		}
+	default:
+		fmt.Fprint(stderr, "usage: longpole diff [BEFORE AFTER]\n")
+		return 2
+	}
+
+	beforeRun, beforeActs, err := db.Load(beforeID)
+	if err != nil {
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
+		return 1
+	}
+	afterRun, afterActs, err := db.Load(afterID)
+	if err != nil {
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
+		return 1
+	}
+	if beforeRun.Scope != scope {
+		fmt.Fprintf(stderr, "longpole: run #%d belongs to a different scope\n", beforeRun.ID)
+		return 1
+	}
+	if afterRun.Scope != scope {
+		fmt.Fprintf(stderr, "longpole: run #%d belongs to a different scope\n", afterRun.ID)
+		return 1
+	}
+
+	fmt.Fprint(stdout, report.Diff(report.DiffInput{
+		BeforeID: beforeRun.ID, AfterID: afterRun.ID,
+		BeforeWallNs: beforeRun.WallNs, AfterWallNs: afterRun.WallNs,
+		Before: beforeActs, After: afterActs,
+		TopN: 10,
+	}))
 	return 0
 }
 
