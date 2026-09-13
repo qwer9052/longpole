@@ -67,7 +67,10 @@ func Summarize(acts []Action, wallNs int64) Summary {
 		s.ByKind[a.Kind] = st
 	}
 
-	s.FullyCached = s.Cached > 0 && s.Ran == 0
+	// Test binaries do real user-visible work but have no CmdReal measurement in
+	// the action graph. Do not call their command fully cached just because all
+	// compile and link actions came from cache.
+	s.FullyCached = s.Cached > 0 && s.Ran == 0 && s.WorkNs == 0 && s.ByKind[KindTest].WallNs == 0
 	if wallNs > 0 {
 		s.Parallelism = float64(s.WorkNs) / float64(wallNs)
 	}

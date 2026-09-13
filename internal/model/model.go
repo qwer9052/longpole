@@ -17,6 +17,7 @@ const (
 	KindLink
 	KindCacheProbe
 	KindVet
+	KindTest
 )
 
 func (k Kind) String() string {
@@ -29,6 +30,8 @@ func (k Kind) String() string {
 		return "cache"
 	case KindVet:
 		return "vet"
+	case KindTest:
+		return "test"
 	default:
 		return "other"
 	}
@@ -70,6 +73,8 @@ func classify(mode string) Kind {
 		return KindCacheProbe
 	case "vet":
 		return KindVet
+	case "test run":
+		return KindTest
 	default:
 		return KindOther
 	}
