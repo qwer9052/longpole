@@ -17,9 +17,10 @@ type Summary struct {
 
 	// WorkNs sums subprocess time across all actions, so it exceeds WallNs on
 	// a parallel build. WallNs is the observed span of the build.
-	WorkNs  int64
-	WallNs  int64
-	QueueNs int64
+	WorkNs       int64
+	WallNs       int64
+	QueueNs      int64
+	ActionSpanNs int64
 
 	ByKind map[Kind]KindStat
 
@@ -55,8 +56,10 @@ func Summarize(acts []Action, wallNs int64) Summary {
 			s.Cached++
 		}
 		s.WorkNs += a.WorkNs
-		s.QueueNs += a.QueueNs
-		if a.QueueNs > queueHeavyThresholdNs {
+		if a.Kind == KindCompile || a.Kind == KindLink {
+			s.QueueNs += a.QueueNs
+		}
+		if (a.Kind == KindCompile || a.Kind == KindLink) && a.QueueNs > queueHeavyThresholdNs {
 			s.QueueHeavy++
 		}
 

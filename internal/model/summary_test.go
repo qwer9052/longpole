@@ -46,6 +46,16 @@ func TestEmptyGraphIsNotFullyCached(t *testing.T) {
 	}
 }
 
+func TestSummarizeQueueIgnoresCacheProbes(t *testing.T) {
+	s := Summarize([]Action{
+		{Kind: KindCacheProbe, QueueNs: 2_000_000_000},
+		{Kind: KindCompile, QueueNs: 60_000_000},
+	}, 1_000_000_000)
+	if s.QueueNs != 60_000_000 || s.QueueHeavy != 1 {
+		t.Fatalf("queue totals should include only work actions: %+v", s)
+	}
+}
+
 func TestParallelismIsWorkOverWall(t *testing.T) {
 	acts := []Action{
 		{Kind: KindCompile, Ran: true, WorkNs: 4_000_000_000},

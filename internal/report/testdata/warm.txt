@@ -8,8 +8,10 @@
   critical path  0.25s of 0.50s wall (50%)
       0.25s  example.com/lab/cmd/app (link)
 
+  worth a look
+    example.com/lab/cmd/app (link) is 100% of the critical path; consider splitting this build step
+
   parallelism  0.5x of 8 cores  (work 0.25s / wall 0.50s)
-    ! 0.98s summed queue wait; 5 actions waited over 50ms
 
   slowest packages
       0.25s  example.com/lab/cmd/app (link), blocks 1
