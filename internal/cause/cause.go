@@ -1,9 +1,9 @@
-// Package cause identifies evidence for actions that rebuilt.
+// Package cause identifies evidence associated with actions that rebuilt.
 //
-// Across runs, hash-input differences identify the input that changed. Within
-// a single run, dependency edges distinguish a package with a rebuilt
-// dependency from the package where a rebuild cascade began. Neither result
-// claims a cause when the required baseline data is absent.
+// Across runs, hash-input differences identify observed input differences.
+// Within one run, verified import/output joins form a conservative candidate
+// rebuild frontier. A single run has no earlier value to compare, so its
+// frontier is not a causal verdict.
 package cause
 
 import (
@@ -97,27 +97,27 @@ func trimLine(line string) string {
 	return strings.TrimRight(line, "\r\n")
 }
 
-// Root is a rebuilt package with no hash-evidenced rebuilt dependency.
-// Downstream is the number of other rebuilt actions hash-evidenced to depend
-// on it.
+// Root is one package on the candidate rebuild frontier. Downstream is the
+// number of other rebuilt actions joined to it by current-run hash evidence.
+// Neither field states why an action rebuilt; that requires a cross-run diff.
 type Root struct {
 	Package    string
 	Downstream int
 }
 
-// Roots identifies the starts of rebuild cascades in one action graph. An
-// action-graph dependency alone is not causal evidence: independent changes
-// can rebuild both sides. An edge is followed only when the dependent's import
-// input matches the dependency's output content ID, and the dependency's hash
-// digest identifies that action. Missing or inconsistent evidence leaves both
-// actions as roots rather than guessing.
+// Roots returns a conservative candidate rebuild frontier for one action
+// graph. An action-graph dependency alone does not join candidates: independent
+// rebuilds can have the same edge. Candidates are joined only when the
+// dependent's current import input matches the dependency's current output
+// content ID and both hash blocks identify their actions. This is evidence of
+// an observed relationship, not proof that either action's input changed.
 func Roots(actions []model.Action, blocks map[string]hashlog.Block) []Root {
 	ran := make([]bool, len(actions))
 	for i, action := range actions {
 		ran[i] = action.Ran && (action.Kind == model.KindCompile || action.Kind == model.KindLink)
 	}
 
-	dependents := causalDependents(actions, ran, blocks)
+	dependents := candidateDependents(actions, ran, blocks)
 	hasCause := make([]bool, len(actions))
 	for _, downstream := range dependents {
 		for _, dependent := range downstream {
@@ -143,7 +143,7 @@ func Roots(actions []model.Action, blocks map[string]hashlog.Block) []Root {
 	return roots
 }
 
-func causalDependents(actions []model.Action, ran []bool, blocks map[string]hashlog.Block) [][]int {
+func candidateDependents(actions []model.Action, ran []bool, blocks map[string]hashlog.Block) [][]int {
 	dependents := make([][]int, len(actions))
 	for dependent, action := range actions {
 		if !ran[dependent] {

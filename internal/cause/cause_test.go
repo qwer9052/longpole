@@ -93,7 +93,7 @@ func TestDiffIgnoresUnchangedAndNewBlocks(t *testing.T) {
 	}
 }
 
-func TestRootsFindsCascadeStartAndCountsRebuiltDependents(t *testing.T) {
+func TestRootsGroupsHashLinkedCandidates(t *testing.T) {
 	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
 	appID := actionID(t, appDigest)
 	configID := actionID(t, "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803")
@@ -150,7 +150,7 @@ func TestRootsRequireDependentBlockIdentity(t *testing.T) {
 	}
 }
 
-func TestRootsKeepIndependentlyRebuiltDependencyAndDependent(t *testing.T) {
+func TestRootsKeepIndependentActionsAsSeparateCandidates(t *testing.T) {
 	configID := actionID(t, "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803")
 	acts := []model.Action{
 		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1}},
@@ -163,13 +163,13 @@ func TestRootsKeepIndependentlyRebuiltDependencyAndDependent(t *testing.T) {
 
 	roots := Roots(acts, blocks)
 	if len(roots) != 2 {
-		t.Fatalf("unmatched import is not causal evidence; got %+v", roots)
+		t.Fatalf("unmatched import must not join independent candidates; got %+v", roots)
 	}
 	if roots[0].Package != "app" || roots[1].Package != "config" {
 		t.Errorf("roots = %+v, want app and config", roots)
 	}
 	if roots[0].Downstream != 0 || roots[1].Downstream != 0 {
-		t.Errorf("independent rebuilds have no proven downstream actions: %+v", roots)
+		t.Errorf("independent candidates have no joined downstream actions: %+v", roots)
 	}
 }
 
@@ -184,7 +184,8 @@ func TestRootsIgnoreCachedAndNonWorkActions(t *testing.T) {
 	}
 }
 
-func TestRootsKeepActionsAsRootsWithoutHashData(t *testing.T) {
+func TestRootsKeepIndependentActionsAsSeparateCandidatesWithoutBaseline(t *testing.T) {
+	// Roots receives one run only, so these actions have no cross-run baseline.
 	acts := []model.Action{
 		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1, -1, 9}},
 		{Package: "config", Kind: model.KindCompile, Ran: true},
@@ -192,7 +193,7 @@ func TestRootsKeepActionsAsRootsWithoutHashData(t *testing.T) {
 
 	roots := Roots(acts, nil)
 	if len(roots) != 2 || roots[0].Package != "app" || roots[1].Package != "config" {
-		t.Errorf("missing hash data must not claim a cascade; got %+v", roots)
+		t.Errorf("missing hash data must leave separate candidates; got %+v", roots)
 	}
 }
 
