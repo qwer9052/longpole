@@ -87,6 +87,20 @@ func TestDiffSuppressesRootWhenDependencyVariantIsAmbiguous(t *testing.T) {
 	}
 }
 
+func TestDiffSuppressesRootWhenDependencyIndexIsInvalid(t *testing.T) {
+	before := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Cached: true, ActionID: "app-before"},
+	}
+	after := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "app-after", Deps: []int{99}},
+	}
+
+	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
+	if strings.Contains(out, "candidate root") {
+		t.Errorf("an invalid dependency index makes the root unknown; got:\n%s", out)
+	}
+}
+
 func TestDiffReportsNoChange(t *testing.T) {
 	same := []model.Action{
 		{Package: "a", Kind: model.KindCompile, ActionID: "A1", Cached: true},

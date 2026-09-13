@@ -27,7 +27,7 @@ const usage = `longpole — why was my Go build slow?
   longpole go test ./...             profile a test build
   longpole --explain go build ./...  also explain rebuild candidates (slower)
   longpole log                       list recent runs
-  longpole diff [A B]                compare two runs (default: the last two)
+  longpole diff [A B]                compare two runs (default: previous run of the same command)
 `
 
 // keepRuns bounds history per project. Fifty is enough to see a trend and small
@@ -339,7 +339,8 @@ func runLogFrom(path, scope string, stdout, stderr io.Writer) (exitCode int) {
 	return 0
 }
 
-// runDiff compares two runs. With no arguments it compares the two most recent.
+// runDiff compares two runs. With no arguments it compares the latest run with
+// the previous recorded run of the same command.
 func runDiff(ctx context.Context, args []string) int {
 	path, err := store.DefaultPath()
 	if err != nil {

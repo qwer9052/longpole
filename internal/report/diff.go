@@ -242,7 +242,10 @@ func writeIdentityNote(b *strings.Builder, changes []change, before, after []mod
 
 func dependenciesStable(before, after []model.Action, deps []int) bool {
 	for _, dependency := range deps {
-		if dependency < 0 || dependency >= len(after) || !isWorkAction(after[dependency]) {
+		if dependency < 0 || dependency >= len(after) {
+			return false
+		}
+		if !isWorkAction(after[dependency]) {
 			continue
 		}
 		if !actionStable(before, after[dependency]) {

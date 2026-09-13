@@ -61,6 +61,12 @@ func TestRunExplainRequiresGoCommand(t *testing.T) {
 	}
 }
 
+func TestUsageDescribesSameCommandDefaultDiff(t *testing.T) {
+	if !strings.Contains(usage, "previous run of the same command") {
+		t.Errorf("diff usage should describe same-command matching; got:\n%s", usage)
+	}
+}
+
 func TestRunWrapExplainSuppressesOnlyHashLines(t *testing.T) {
 	if os.Getenv("LONGPOLE_EXPLAIN_TEST_CHILD") == "1" {
 		fmt.Fprintln(os.Stderr, "HASH[build example.com/project]")
