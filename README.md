@@ -7,24 +7,26 @@ longpole go build ./...
 ```
 
 ```
-  build: 392 actions, 195 ran, 197 cached (50%)        12.40s wall
+  build: 392 actions, 195 ran, 1 cached (1%)        12.40s wall
 
   time went to
-    compile      9.80s   79%   194 actions
-    link         2.10s   17%   1 actions
+    compile    24.56s   99%   194 actions
+    link        0.29s    1%   2 actions
+    cache       1.51s  span sum   194 actions (may overlap)
 
-  critical path  8.20s of 12.40s wall (66%)
-      3.10s  k8s.io/client-go/kubernetes
-      2.00s  example.com/app/internal/bigpkg
-      + 12 more
+  critical path  5.76s of 12.40s wall (46%)
+      1.14s  runtime
+      0.57s  math/big
+      0.37s  crypto/tls
+    + 24 more
 
-  parallelism  1.9x of 8 cores  (work 23.10s / wall 12.40s)
-    ! 4.20s queue wait across 38 actions — the graph is narrow here
+  parallelism  2.0x of 8 cores  (work 24.84s / wall 12.40s)
+    ! 6.43s summed queue wait; 29 actions waited over 50ms
 
   slowest packages
-      2.00s  example.com/app/internal/bigpkg, blocks 47
-
-  saved as run #7.  compare:  longpole diff 6 7
+      1.14s  runtime, blocks 289
+      0.71s  net, blocks 25
+      0.68s  reflect, blocks 91
 ```
 
 Named for "the long pole in the tent" — the item that sets the schedule. That is
@@ -52,7 +54,7 @@ nothing was rebuilt. longpole says what actually happened:
 |---|---|
 | `longpole go build ./...` | Profile a build |
 | `longpole go test ./...` | Profile a test build |
-| `longpole --explain go build ./...` | Also explain what rebuilt and why. Slower. |
+| `longpole --explain go build ./...` | List conservative candidate roots for rebuilds. Slower. |
 | `longpole log` | List recent runs in this project |
 | `longpole diff [A B]` | Compare two runs, defaulting to the last two |
 
@@ -62,10 +64,9 @@ nothing was rebuilt. longpole says what actually happened:
 the honest measure of cost, and it is what the rankings use. Cached actions
 contribute zero, so they never appear in a "slowest" list.
 
-**Queue wait** is time an action sat ready but unscheduled. High queue wait means
-the dependency graph is too narrow to use your cores, or something is
-serializing the build. No other tool reports this, and it is the difference
-between blaming a package and blaming the shape of your graph.
+**Queue wait** is time an action sat ready but unscheduled. It identifies
+scheduling delay, but does not by itself establish why that delay occurred; read
+it alongside work time and the critical path.
 
 **Critical path** is the heaviest chain of dependent work. Shortening anything
 off the critical path does not make the build faster.
