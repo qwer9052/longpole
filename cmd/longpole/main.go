@@ -95,6 +95,7 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 	var graphBefore graphFileState
 	var graphStatErr error
 	if userGraph && graphPath != "" {
+		graphPath = wrap.ResolvePath(argv, graphPath)
 		graphBefore, graphStatErr = statGraph(graphPath)
 	}
 	var setupErr error

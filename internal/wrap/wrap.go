@@ -88,28 +88,40 @@ func ExistingGraphPath(argv []string) (string, bool) {
 // working directory before the subcommand runs, so it is not a subcommand
 // itself and injecting before it would make a valid command invalid.
 func subcommandIndex(argv []string) (int, error) {
+	i, _, err := commandParts(argv)
+	return i, err
+}
+
+// commandParts finds the subcommand and every leading change-directory flag.
+// The go command accepts either one or two leading dashes for -C; keeping the
+// aliases together avoids letting validation, injection, and scope disagree.
+func commandParts(argv []string) (int, []string, error) {
 	if len(argv) < 2 {
-		return 0, fmt.Errorf("usage: longpole go build ./...")
+		return 0, nil, fmt.Errorf("usage: longpole go build ./...")
 	}
+	var dirs []string
 	for i := 1; i < len(argv); {
 		switch argv[i] {
-		case "-C":
+		case "-C", "--C":
 			if i+1 >= len(argv) || argv[i+1] == "" {
-				return 0, fmt.Errorf("`go -C` requires a directory")
+				return 0, nil, fmt.Errorf("`go -C` requires a directory")
 			}
+			dirs = append(dirs, argv[i+1])
 			i += 2
 		default:
-			if strings.HasPrefix(argv[i], "-C=") {
-				if strings.TrimPrefix(argv[i], "-C=") == "" {
-					return 0, fmt.Errorf("`go -C` requires a directory")
+			if strings.HasPrefix(argv[i], "-C=") || strings.HasPrefix(argv[i], "--C=") {
+				_, dir, _ := strings.Cut(argv[i], "=")
+				if dir == "" {
+					return 0, nil, fmt.Errorf("`go -C` requires a directory")
 				}
+				dirs = append(dirs, dir)
 				i++
 				continue
 			}
-			return i, nil
+			return i, dirs, nil
 		}
 	}
-	return 0, fmt.Errorf("usage: longpole go build ./...")
+	return 0, nil, fmt.Errorf("usage: longpole go build ./...")
 }
 
 // Result is what the wrapped command produced.

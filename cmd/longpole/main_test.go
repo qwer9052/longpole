@@ -123,6 +123,53 @@ func TestRunWrapExistingGraphFlagDoesNotNeedTempDirectory(t *testing.T) {
 	}
 }
 
+func TestRunWrapResolvesRelativeGraphPathFromChangeDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/relative-graph\n\ngo 1.25\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hello.go"), []byte("package hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readStderr, writeStderr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writeStderr
+	defer func() { os.Stderr = originalStderr }()
+
+	goName := "go"
+	if runtime.GOOS == "windows" {
+		goName += ".exe"
+	}
+	goPath := filepath.Join(runtime.GOROOT(), "bin", goName)
+	got := runWrap(context.Background(), []string{
+		goPath, "-C", dir, "build", "-debug-actiongraph=graph.json", ".",
+	})
+	if err := writeStderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := io.ReadAll(readStderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readStderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got != 0 {
+		t.Errorf("exit code = %d, want 0; stderr = %q", got, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "graph.json")); err != nil {
+		t.Fatalf("relative graph was not written under -C directory: %v", err)
+	}
+	if strings.Contains(string(stderr), "skipping analysis") || !strings.Contains(string(stderr), "build:") {
+		t.Errorf("relative graph was not analyzed: %q", stderr)
+	}
+}
+
 func TestRunWrapSkipsStaleExistingGraph(t *testing.T) {
 	graphPath := filepath.Join(t.TempDir(), "actiongraph.json")
 	if err := os.WriteFile(graphPath, []byte("[]"), 0o600); err != nil {

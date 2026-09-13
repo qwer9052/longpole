@@ -54,6 +54,39 @@ func TestDiffNamesRootCandidateRatherThanHeaviestDependent(t *testing.T) {
 	}
 }
 
+func TestDiffSuppressesRootWhenDependencyChangedInBothRuns(t *testing.T) {
+	before := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Cached: true, ActionID: "app-before", Deps: []int{1}},
+		{ID: 1, Package: "model", Kind: model.KindCompile, Ran: true, ActionID: "model-before"},
+	}
+	after := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "app-after", Deps: []int{1}},
+		{ID: 1, Package: "model", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "model-after"},
+	}
+
+	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
+	if strings.Contains(out, "candidate root") {
+		t.Errorf("a changed dependency that ran in both builds makes the root unknown; got:\n%s", out)
+	}
+}
+
+func TestDiffSuppressesRootWhenDependencyVariantIsAmbiguous(t *testing.T) {
+	before := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Cached: true, ActionID: "app-before", Deps: []int{1}},
+		{ID: 1, Package: "model", Mode: "build", Kind: model.KindCompile, Cached: true, ActionID: "model-old"},
+	}
+	after := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "app-after", Deps: []int{1}},
+		{ID: 1, Package: "model", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "model-first"},
+		{ID: 2, Package: "model", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "model-second"},
+	}
+
+	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
+	if strings.Contains(out, "candidate root") {
+		t.Errorf("an ambiguous dependency variant makes the root unknown; got:\n%s", out)
+	}
+}
+
 func TestDiffReportsNoChange(t *testing.T) {
 	same := []model.Action{
 		{Package: "a", Kind: model.KindCompile, ActionID: "A1", Cached: true},

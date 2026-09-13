@@ -28,27 +28,28 @@ func CurrentScope(ctx context.Context, commands ...[]string) string {
 		dir = "unknown"
 	}
 	if len(commands) != 0 {
-		dir = commandDir(commands[0], dir)
+		if commandDir, err := commandDir(commands[0], dir); err == nil {
+			dir = commandDir
+		}
 	}
 	return Scope(modulePath(ctx, dir), dir)
 }
 
-func commandDir(argv []string, dir string) string {
-	for i := 1; i < len(argv); {
-		var next string
-		switch {
-		case argv[i] == "-C" && i+1 < len(argv):
-			next = argv[i+1]
-			i += 2
-		case strings.HasPrefix(argv[i], "-C="):
-			next = strings.TrimPrefix(argv[i], "-C=")
-			i++
-		default:
-			return dir
-		}
-		if next == "" {
-			return dir
-		}
+// CommandDir returns the directory in which a wrapped go command will run.
+func CommandDir(argv []string) (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return commandDir(argv, dir)
+}
+
+func commandDir(argv []string, dir string) (string, error) {
+	_, dirs, err := commandParts(argv)
+	if err != nil {
+		return dir, err
+	}
+	for _, next := range dirs {
 		if filepath.IsAbs(next) {
 			dir = next
 		} else {
@@ -56,7 +57,20 @@ func commandDir(argv []string, dir string) string {
 		}
 		dir = filepath.Clean(dir)
 	}
-	return dir
+	return dir, nil
+}
+
+// ResolvePath maps a user-supplied relative path into the wrapped command's
+// effective directory without changing the user's argv.
+func ResolvePath(argv []string, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	dir, err := CommandDir(argv)
+	if err != nil {
+		return path
+	}
+	return filepath.Join(dir, path)
 }
 
 // modulePath asks the go command for the current module, returning "" when

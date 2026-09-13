@@ -76,12 +76,20 @@ func TestCurrentScopeUsesLeadingChangeDirectoryFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := CurrentScope(context.Background(), []string{"go", "-C", dir, "build", "."})
-	want := Scope("example.com/changed-dir", dir)
-	if got != want {
-		t.Errorf("CurrentScope = %q, want %q", got, want)
+	forms := [][]string{
+		{"-C", dir},
+		{"-C=" + dir},
+		{"--C", dir},
+		{"--C=" + dir},
 	}
-	if strings.Contains(got, "@unknown") {
-		t.Errorf("scope did not resolve the -C directory: %q", got)
+	for _, form := range forms {
+		got := CurrentScope(context.Background(), append([]string{"go"}, append(form, "build", ".")...))
+		want := Scope("example.com/changed-dir", dir)
+		if got != want {
+			t.Errorf("CurrentScope(%v) = %q, want %q", form, got, want)
+		}
+		if strings.Contains(got, "@unknown") {
+			t.Errorf("scope did not resolve the -C directory: %q", got)
+		}
 	}
 }
