@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/qwer9052/longpole/internal/actiongraph"
+	"github.com/qwer9052/longpole/internal/hashlog"
 	"github.com/qwer9052/longpole/internal/model"
 )
 
@@ -167,6 +168,54 @@ func TestReportEmptyGraphLabelsFailedBuild(t *testing.T) {
 	}
 }
 
+func TestReportShowsRebuildRootCandidates(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, Deps: []int{1}},
+		{ID: 1, Package: "config", Kind: model.KindCompile, Ran: true, WorkNs: 500_000_000},
+	}
+	out := Run(model.Summarize(acts, 2_000_000_000), acts, Options{
+		TopN: 5, PathN: 5, Cores: 8, ShowRoots: true,
+	})
+	if !strings.Contains(out, "why it rebuilt") {
+		t.Errorf("expected a rebuild-root section; got:\n%s", out)
+	}
+	if !strings.Contains(out, "config") {
+		t.Errorf("the rebuild-root candidate should be named; got:\n%s", out)
+	}
+	if strings.Contains(out, "changed on its own") {
+		t.Errorf("a single run cannot prove an action changed on its own; got:\n%s", out)
+	}
+}
+
+func TestReportUsesHashEvidenceToGroupRootCandidates(t *testing.T) {
+	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
+	const configDigest = "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"
+	appID := reportActionID(t, appDigest)
+	configID := reportActionID(t, configDigest)
+	acts := []model.Action{
+		{ID: 0, Package: "app", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: appID, BuildID: appID + "/app-output", Deps: []int{1}},
+		{ID: 1, Package: "config", Kind: model.KindCompile, Ran: true, WorkNs: 500_000_000, ActionID: configID, BuildID: configID + "/config-output"},
+	}
+	blocks := map[string]hashlog.Block{
+		"build app":    {Name: "build app", Inputs: []string{"import config config-output"}, Digest: appDigest},
+		"build config": {Name: "build config", Digest: configDigest},
+	}
+	out := Run(model.Summarize(acts, 2_000_000_000), acts, Options{
+		TopN: 5, PathN: 5, Cores: 8, ShowRoots: true, HashBlocks: blocks,
+	})
+	if !strings.Contains(out, "config  (candidate root; 1 action followed)") {
+		t.Errorf("hash evidence should group app below config; got:\n%s", out)
+	}
+}
+
+func TestReportOmitsRootsWhenNotRequested(t *testing.T) {
+	acts := []model.Action{{ID: 0, Package: "app", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000}}
+	out := Run(model.Summarize(acts, 2_000_000_000), acts, Options{TopN: 5, PathN: 5, Cores: 8})
+	if strings.Contains(out, "why it rebuilt") {
+		t.Errorf("roots must only appear under --explain; got:\n%s", out)
+	}
+}
+
 func TestReportEndsWithOneNewline(t *testing.T) {
 	ran := []model.Action{{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "one", Ran: true, WorkNs: 100_000_000}}
 	cached := []model.Action{{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "one", Cached: true}}
@@ -188,4 +237,13 @@ func TestReportEndsWithOneNewline(t *testing.T) {
 			}
 		})
 	}
+}
+
+func reportActionID(t *testing.T, digest string) string {
+	t.Helper()
+	id, err := hashlog.ActionID(digest)
+	if err != nil {
+		t.Fatalf("ActionID(%q): %v", digest, err)
+	}
+	return id
 }
