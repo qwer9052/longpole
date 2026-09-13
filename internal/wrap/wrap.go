@@ -146,6 +146,9 @@ func Run(ctx context.Context, argv []string, extraEnv []string, stderr *StderrTe
 	}
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// Do not wait forever for a descendant that inherited stderr/stdout after
+	// the go process itself exited (common in tests that spawn helpers).
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	if stderr != nil {

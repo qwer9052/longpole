@@ -1,7 +1,9 @@
 package wrap
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -31,6 +33,21 @@ func CheckGoVersion(v string) error {
 func UnverifiedGoVersion(v string) bool {
 	minor, ok := parseMinor(v)
 	return ok && minor > maxTestedMinor
+}
+
+// CommandVersion asks the executable that will actually run the build for its
+// version. This accounts for PATH differences and GOTOOLCHAIN selection.
+func CommandVersion(ctx context.Context, goPath string) (string, error) {
+	out, err := exec.CommandContext(ctx, goPath, "version").Output()
+	if err != nil {
+		return "", fmt.Errorf("run %s version: %w", goPath, err)
+	}
+	for _, field := range strings.Fields(string(out)) {
+		if strings.HasPrefix(field, "go1.") {
+			return field, nil
+		}
+	}
+	return "", fmt.Errorf("parse %s version output %q", goPath, strings.TrimSpace(string(out)))
 }
 
 // parseMinor extracts 27 from "go1.27.1". It returns false for anything that

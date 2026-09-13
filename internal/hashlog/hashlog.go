@@ -31,13 +31,28 @@ type Block struct {
 type Collector struct {
 	blocks    map[string]*Block
 	ambiguous map[string]struct{}
+	retain    func(string) bool
 }
 
 // New returns an empty Collector.
 func New() *Collector {
+	return newCollector(nil)
+}
+
+// NewRootsOnly returns a collector that retains only dependency evidence and
+// digests needed by the rebuild-candidate analysis. This keeps --explain's
+// memory proportional to the dependency graph rather than every hash input.
+func NewRootsOnly() *Collector {
+	return newCollector(func(input string) bool {
+		return strings.HasPrefix(input, "import ") || strings.HasPrefix(input, "packagefile ")
+	})
+}
+
+func newCollector(retain func(string) bool) *Collector {
 	return &Collector{
 		blocks:    make(map[string]*Block),
 		ambiguous: make(map[string]struct{}),
+		retain:    retain,
 	}
 }
 
@@ -54,8 +69,36 @@ func IsHashLine(line []byte) bool {
 	if len(line) == 0 {
 		return false
 	}
-	if bytes.HasPrefix(line, prefixHash) || bytes.HasPrefix(line, prefixSubkey) {
-		return true
+	if bytes.HasPrefix(line, prefixHash) {
+		end := bytes.IndexByte(line[len(prefixHash):], ']')
+		if end < 0 {
+			return false
+		}
+		if end == 0 {
+			return false
+		}
+		rest := line[len(prefixHash)+end+1:]
+		if len(rest) == 0 {
+			return true
+		}
+		if !bytes.HasPrefix(rest, []byte(": ")) {
+			return false
+		}
+		value := rest[2:]
+		return isHex64(value) || isQuoted(value)
+	}
+	if bytes.HasPrefix(line, prefixSubkey) {
+		rest := line[len(prefixSubkey):]
+		space := bytes.IndexByte(rest, ' ')
+		if space != 64 || !isHex64(rest[:space]) {
+			return false
+		}
+		eq := bytes.LastIndex(rest[space+1:], []byte(" = "))
+		if eq < 1 {
+			return false
+		}
+		eq += space + 1
+		return isQuoted(rest[space+1:eq]) && isHex64(rest[eq+3:])
 	}
 	if !bytes.HasPrefix(line, prefixFile) {
 		return false
@@ -63,6 +106,14 @@ func IsHashLine(line []byte) bool {
 
 	i := bytes.LastIndex(line, []byte(": "))
 	return i > len(prefixFile) && isHex64(line[i+2:])
+}
+
+func isQuoted(value []byte) bool {
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return false
+	}
+	_, err := strconv.Unquote(string(value))
+	return err == nil
 }
 
 func isHex64(value []byte) bool {
@@ -111,7 +162,9 @@ func (c *Collector) Line(line []byte) {
 			// its position without making analysis fail.
 			input = value
 		}
-		block.Inputs = append(block.Inputs, input)
+		if c.retain == nil || c.retain(input) {
+			block.Inputs = append(block.Inputs, input)
+		}
 		return
 	}
 	if isHex64(rest[2:]) {

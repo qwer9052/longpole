@@ -84,7 +84,7 @@ func TestIsHashLine(t *testing.T) {
 	yes := []string{
 		`HASH[build x]: "a"`,
 		`HASH[build x]`,
-		`HASH subkey abc stdout = def`,
+		`HASH subkey ` + strings.Repeat("0", 64) + ` "stdout" = ` + strings.Repeat("1", 64),
 		`HASH C:\lab\a.go: 2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803`,
 	}
 	for _, line := range yes {
@@ -98,12 +98,30 @@ func TestIsHashLine(t *testing.T) {
 		"bad.go:2:16: declared and not used: x",
 		"HASHER is not a hash line",
 		"HASH file.go: not-a-digest",
+		`HASH[build x]: user message`,
+		`HASH subkey user message`,
+		`HASH subkey ` + strings.Repeat("0", 64) + ` not quoted = ` + strings.Repeat("0", 64),
 		"",
+		"HASH[not closed",
+		"HASH[build x] user output",
+		"HASH subkey ",
 	}
 	for _, line := range no {
 		if IsHashLine([]byte(line)) {
 			t.Errorf("must pass through to the user: %q", line)
 		}
+	}
+}
+
+func TestRootsOnlyCollectorRetainsDependencyEvidence(t *testing.T) {
+	c := NewRootsOnly()
+	c.Line([]byte("HASH[build x]\n"))
+	c.Line([]byte(`HASH[build x]: "file x.go abc"` + "\n"))
+	c.Line([]byte(`HASH[build x]: "import y def"` + "\n"))
+	c.Line([]byte(`HASH[build x]: "packagefile z=ghi"` + "\n"))
+	block := c.Blocks()["build x"]
+	if len(block.Inputs) != 2 || block.Inputs[0] != "import y def" || block.Inputs[1] != "packagefile z=ghi" {
+		t.Fatalf("retained inputs = %v", block.Inputs)
 	}
 }
 
