@@ -76,6 +76,12 @@ func TestDiffHandlesNewPackage(t *testing.T) {
 	if !strings.Contains(out, "brand-new") {
 		t.Errorf("a package absent from the earlier run should still be listed; got:\n%s", out)
 	}
+	if !strings.Contains(out, "new package") {
+		t.Errorf("a package absent from the earlier run should be labeled new; got:\n%s", out)
+	}
+	if strings.Contains(out, "cached last time") {
+		t.Errorf("a new package must not be called cached; got:\n%s", out)
+	}
 }
 
 func TestDiffAllowsNoPackageRowsWhenTopNIsNonPositive(t *testing.T) {

@@ -339,6 +339,14 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 		fmt.Fprintf(stderr, "longpole: %v\n", err)
 		return 1
 	}
+	if beforeRun.Scope != scope {
+		fmt.Fprintf(stderr, "longpole: run #%d belongs to a different scope\n", beforeRun.ID)
+		return 1
+	}
+	if afterRun.Scope != scope {
+		fmt.Fprintf(stderr, "longpole: run #%d belongs to a different scope\n", afterRun.ID)
+		return 1
+	}
 
 	fmt.Fprint(stdout, report.Diff(report.DiffInput{
 		BeforeID: beforeRun.ID, AfterID: afterRun.ID,

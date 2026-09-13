@@ -20,8 +20,10 @@ type DiffInput struct {
 type change struct {
 	Package   string
 	WorkNs    int64
+	WasCached bool
 	OldAction string
 	NewAction string
+	IsNew     bool
 }
 
 type actionKey struct {
@@ -52,7 +54,7 @@ func Diff(in DiffInput) string {
 	for _, c := range changes {
 		totalWork += c.WorkNs
 	}
-	fmt.Fprintf(&b, "\n  rebuilt this time, cached last time     %d packages, +%s\n",
+	fmt.Fprintf(&b, "\n  ran this time, did not run last time     %d packages, +%s\n",
 		len(changes), Dur(totalWork))
 
 	n := in.TopN
@@ -63,7 +65,7 @@ func Diff(in DiffInput) string {
 		n = len(changes)
 	}
 	for _, c := range changes[:n] {
-		fmt.Fprintf(&b, "    %7s  %s\n", Dur(c.WorkNs), c.Package)
+		fmt.Fprintf(&b, "    %7s  %s  %s\n", Dur(c.WorkNs), c.Package, previousStatus(c))
 	}
 	if rest := len(changes) - n; rest > 0 {
 		fmt.Fprintf(&b, "    + %d more\n", rest)
@@ -98,12 +100,24 @@ func findChanges(before, after []model.Action) []change {
 		out = append(out, change{
 			Package:   pkgName(a),
 			WorkNs:    a.WorkNs,
+			WasCached: old.Cached,
 			OldAction: old.ActionID,
 			NewAction: a.ActionID,
+			IsNew:     !existed,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].WorkNs > out[j].WorkNs })
 	return out
+}
+
+func previousStatus(c change) string {
+	if c.IsNew {
+		return "new package"
+	}
+	if c.WasCached {
+		return "cached last time"
+	}
+	return "did not run last time"
 }
 
 // writeIdentityNote explains the mechanism behind the rebuilds. Without this

@@ -308,6 +308,52 @@ func TestRunDiffNeedsTwoRunsInScope(t *testing.T) {
 	}
 }
 
+func TestRunDiffExplicitIDsRequireCurrentScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetBefore, err := db.Save(store.Run{Scope: "target"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetAfter, err := db.Save(store.Run{Scope: "target"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := db.Save(store.Run{Scope: "other"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		beforeID int64
+		afterID  int64
+		wantExit int
+	}{
+		{name: "both runs in current scope", beforeID: targetBefore, afterID: targetAfter, wantExit: 0},
+		{name: "foreign runs", beforeID: foreign, afterID: foreign, wantExit: 1},
+		{name: "mixed runs", beforeID: targetBefore, afterID: foreign, wantExit: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			args := []string{strconv.FormatInt(tt.beforeID, 10), strconv.FormatInt(tt.afterID, 10)}
+			if got := runDiffFrom(path, "target", args, &stdout, &stderr); got != tt.wantExit {
+				t.Fatalf("exit code = %d, want %d; stderr = %q", got, tt.wantExit, stderr.String())
+			}
+			if tt.wantExit != 0 && !strings.Contains(stderr.String(), "different scope") {
+				t.Errorf("stderr = %q, want scope error", stderr.String())
+			}
+		})
+	}
+}
+
 type historyErrorStore struct {
 	previousErr error
 	pruneErr    error
