@@ -76,6 +76,9 @@ func ResolvePath(argv []string, path string) string {
 // modulePath asks the go command for the current module, returning "" when
 // there is not one.
 func modulePath(ctx context.Context, dir string) string {
+	if m := modulePathFromFile(dir); m != "" {
+		return m
+	}
 	ctx, cancel := context.WithTimeout(ctx, moduleLookupTimeout)
 	defer cancel()
 
@@ -109,4 +112,24 @@ func modulePath(ctx context.Context, dir string) string {
 		return ""
 	}
 	return m
+}
+
+func modulePathFromFile(dir string) string {
+	for dir != "" {
+		data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) == 2 && fields[0] == "module" {
+					return fields[1]
+				}
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
 }

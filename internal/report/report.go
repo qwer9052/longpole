@@ -50,6 +50,7 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	// The headline case the incumbent gets wrong.
 	if s.FullyCached {
 		b.WriteString("\n  nothing to optimize — everything came from cache\n")
+		writeLoading(&b, s)
 		probe := s.ByKind[model.KindCacheProbe]
 		if probe.Count > 0 {
 			fmt.Fprintf(&b, "  (%s summed cache-probe spans across %d %s; spans may overlap)\n",
@@ -59,7 +60,9 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	}
 
 	writeKinds(&b, s, acts)
+	writeLoading(&b, s)
 	writeCriticalPath(&b, acts, s, opt)
+	writeSuggestions(&b, acts, s)
 	writeParallelism(&b, s, opt)
 	writeBiggest(&b, acts, opt)
 	if opt.ShowRoots {
@@ -68,6 +71,25 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	writeFooter(&b, opt)
 
 	return b.String()
+}
+
+func writeSuggestions(b *strings.Builder, acts []model.Action, s model.Summary) {
+	path, total := critpath.Find(acts)
+	if total <= 0 || len(path) == 0 {
+		return
+	}
+	var top model.Action
+	for _, a := range path {
+		if a.WorkNs > top.WorkNs {
+			top = a
+		}
+	}
+	if top.Package == "" || top.WorkNs*2 < total {
+		return
+	}
+	fmt.Fprintf(b, "\n  worth a look\n    %s is %s of the critical path; consider splitting this build step",
+		pkgName(top), Pct(top.WorkNs, total))
+	b.WriteByte('\n')
 }
 
 func writeKinds(b *strings.Builder, s model.Summary, acts []model.Action) {
@@ -168,6 +190,17 @@ func writeParallelism(b *strings.Builder, s model.Summary, opt Options) {
 		fmt.Fprintf(b, "    ! %s summed queue wait; %d %s waited over 50ms\n",
 			Dur(s.QueueNs), s.QueueHeavy, actionWord(s.QueueHeavy))
 	}
+	if s.Parallelism > 1.5 {
+		b.WriteString("    subprocess wall includes CPU contention from parallel actions\n")
+	}
+}
+
+func writeLoading(b *strings.Builder, s model.Summary) {
+	if s.WallNs <= 0 || s.ActionSpanNs <= 0 || s.ActionSpanNs >= s.WallNs {
+		return
+	}
+	fmt.Fprintf(b, "\n  go command loading ≈%s before actions (estimated; not in the action graph)\n",
+		Dur(s.WallNs-s.ActionSpanNs))
 }
 
 func writeBiggest(b *strings.Builder, acts []model.Action, opt Options) {

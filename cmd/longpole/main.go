@@ -232,6 +232,7 @@ func analyze(ctx context.Context, graphPath string, argv []string, res wrap.Resu
 	}
 	acts := model.NewAll(raw)
 	s := model.Summarize(acts, res.WallNs)
+	s.ActionSpanNs = model.Span(raw).Nanoseconds()
 	opt := report.Options{
 		TopN:       5,
 		PathN:      5,
