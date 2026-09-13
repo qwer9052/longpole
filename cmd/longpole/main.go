@@ -83,19 +83,17 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 2
 	}
-	goVersion := runtime.Version()
-	if actual, err := wrap.CommandVersion(ctx, argv[0]); err == nil {
-		goVersion = actual
-	}
-	if err := wrap.CheckGoVersion(goVersion); err != nil {
-		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
-		return 2
-	}
-	if wrap.UnverifiedGoVersion(goVersion) {
-		fmt.Fprintf(os.Stderr,
-			"longpole: %s is newer than any version this was tested against; "+
-				"the report may be wrong\n", goVersion)
-	}
+	// Probe the actual toolchain concurrently with the build so version
+	// detection does not add a serial subprocess to every invocation.
+	goVersionCh := make(chan string, 1)
+	probeDir, _ := wrap.CommandDir(argv)
+	go func() {
+		version := runtime.Version()
+		if actual, err := wrap.CommandVersion(ctx, argv[0], probeDir); err == nil {
+			version = actual
+		}
+		goVersionCh <- version
+	}()
 
 	cmdArgs := argv
 	graphPath, userGraph := wrap.ExistingGraphPath(argv)
@@ -145,6 +143,15 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 1
+	}
+	goVersion := <-goVersionCh
+	if err := wrap.CheckGoVersion(goVersion); err != nil {
+		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
+	}
+	if wrap.UnverifiedGoVersion(goVersion) {
+		fmt.Fprintf(os.Stderr,
+			"longpole: %s is newer than any version this was tested against; "+
+				"the report may be wrong\n", goVersion)
 	}
 
 	// From here on, nothing may change the exit code.

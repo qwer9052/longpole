@@ -37,8 +37,12 @@ func UnverifiedGoVersion(v string) bool {
 
 // CommandVersion asks the executable that will actually run the build for its
 // version. This accounts for PATH differences and GOTOOLCHAIN selection.
-func CommandVersion(ctx context.Context, goPath string) (string, error) {
-	out, err := exec.CommandContext(ctx, goPath, "version").Output()
+func CommandVersion(ctx context.Context, goPath string, dirs ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, goPath, "version")
+	if len(dirs) > 0 && dirs[0] != "" {
+		cmd.Dir = dirs[0]
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("run %s version: %w", goPath, err)
 	}

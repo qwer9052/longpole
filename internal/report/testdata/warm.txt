@@ -2,7 +2,7 @@
   build: 392 actions, 1 ran, 195 cached (99%)        0.50s wall
 
   time went to
-    link        0.25s  100%   2 actions
+    link        0.25s  100%   1 of 2 actions
     cache       2.87s  span sum   194 actions (may overlap)
 
   critical path  0.25s of 0.50s wall (50%)
