@@ -80,6 +80,15 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 2
 	}
+	if err := wrap.CheckGoVersion(runtime.Version()); err != nil {
+		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
+		return 2
+	}
+	if wrap.UnverifiedGoVersion(runtime.Version()) {
+		fmt.Fprintf(os.Stderr,
+			"longpole: %s is newer than any version this was tested against; "+
+				"the report may be wrong\n", runtime.Version())
+	}
 
 	cmdArgs := argv
 	graphPath, userGraph := wrap.ExistingGraphPath(argv)
