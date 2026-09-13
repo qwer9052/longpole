@@ -72,7 +72,7 @@ func diffInputs(before, after []string) []Input {
 			Label:    label,
 			Before:   trimLine(old),
 			After:    trimLine(new),
-			IsImport: strings.HasPrefix(label, "import "),
+			IsImport: strings.HasPrefix(strings.TrimSpace(new), "import "),
 		})
 	}
 	return changed
@@ -97,26 +97,36 @@ func trimLine(line string) string {
 	return strings.TrimRight(line, "\r\n")
 }
 
-// Root is a rebuilt package with no rebuilt dependency. Downstream is the
-// number of other rebuilt actions that transitively depend on it.
+// Root is a rebuilt package with no hash-evidenced rebuilt dependency.
+// Downstream is the number of other rebuilt actions hash-evidenced to depend
+// on it.
 type Root struct {
 	Package    string
 	Downstream int
 }
 
-// Roots identifies the starts of rebuild cascades in one action graph. Hash
-// blocks are accepted so callers can use the same data they use for DiffBlocks;
-// action-graph dependencies are the available evidence for a first-run chain.
-func Roots(actions []model.Action, _ map[string]hashlog.Block) []Root {
+// Roots identifies the starts of rebuild cascades in one action graph. An
+// action-graph dependency alone is not causal evidence: independent changes
+// can rebuild both sides. An edge is followed only when the dependent's import
+// input matches the dependency's output content ID, and the dependency's hash
+// digest identifies that action. Missing or inconsistent evidence leaves both
+// actions as roots rather than guessing.
+func Roots(actions []model.Action, blocks map[string]hashlog.Block) []Root {
 	ran := make([]bool, len(actions))
 	for i, action := range actions {
 		ran[i] = action.Ran && (action.Kind == model.KindCompile || action.Kind == model.KindLink)
 	}
 
-	dependents := rebuiltDependents(actions)
+	dependents := causalDependents(actions, ran, blocks)
+	hasCause := make([]bool, len(actions))
+	for _, downstream := range dependents {
+		for _, dependent := range downstream {
+			hasCause[dependent] = true
+		}
+	}
 	var roots []Root
 	for i, action := range actions {
-		if !ran[i] || hasRebuiltDependency(action.Deps, ran) {
+		if !ran[i] || hasCause[i] {
 			continue
 		}
 		roots = append(roots, Root{
@@ -133,25 +143,72 @@ func Roots(actions []model.Action, _ map[string]hashlog.Block) []Root {
 	return roots
 }
 
-func hasRebuiltDependency(deps []int, ran []bool) bool {
-	for _, dep := range deps {
-		if dep >= 0 && dep < len(ran) && ran[dep] {
-			return true
-		}
-	}
-	return false
-}
-
-func rebuiltDependents(actions []model.Action) [][]int {
+func causalDependents(actions []model.Action, ran []bool, blocks map[string]hashlog.Block) [][]int {
 	dependents := make([][]int, len(actions))
-	for i, action := range actions {
-		for _, dep := range action.Deps {
-			if dep >= 0 && dep < len(actions) {
-				dependents[dep] = append(dependents[dep], i)
+	for dependent, action := range actions {
+		if !ran[dependent] {
+			continue
+		}
+		block, ok := blockForAction(blocks, action)
+		if !ok {
+			continue
+		}
+		imports := importedOutputs(block)
+		for _, dependency := range action.Deps {
+			if dependency < 0 || dependency >= len(actions) || !ran[dependency] {
+				continue
 			}
+			output, ok := actionOutput(actions[dependency], blocks)
+			if !ok || !imports[actions[dependency].Package][output] {
+				continue
+			}
+			dependents[dependency] = append(dependents[dependency], dependent)
 		}
 	}
 	return dependents
+}
+
+func blockForAction(blocks map[string]hashlog.Block, action model.Action) (hashlog.Block, bool) {
+	for _, name := range []string{action.Mode + " " + action.Package, "build " + action.Package, "link " + action.Package} {
+		if block, ok := blocks[name]; ok {
+			return block, true
+		}
+	}
+	return hashlog.Block{}, false
+}
+
+func importedOutputs(block hashlog.Block) map[string]map[string]bool {
+	outputs := make(map[string]map[string]bool)
+	for _, input := range block.Inputs {
+		fields := strings.Fields(trimLine(input))
+		if len(fields) != 3 || fields[0] != "import" {
+			continue
+		}
+		if outputs[fields[1]] == nil {
+			outputs[fields[1]] = make(map[string]bool)
+		}
+		outputs[fields[1]][fields[2]] = true
+	}
+	return outputs
+}
+
+func actionOutput(action model.Action, blocks map[string]hashlog.Block) (string, bool) {
+	block, ok := blockForAction(blocks, action)
+	if !ok {
+		return "", false
+	}
+	digestID, err := hashlog.ActionID(block.Digest)
+	if err != nil {
+		return "", false
+	}
+	buildActionID, output, ok := strings.Cut(action.BuildID, "/")
+	if !ok || output == "" || digestID != buildActionID {
+		return "", false
+	}
+	if action.ActionID != "" && action.ActionID != digestID {
+		return "", false
+	}
+	return output, true
 }
 
 func countDownstream(dependents [][]int, ran []bool, start int) int {

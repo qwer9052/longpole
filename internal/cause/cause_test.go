@@ -54,6 +54,23 @@ func TestDiffFindsChangedDependency(t *testing.T) {
 	}
 }
 
+func TestDiffMarksCurrentImportAfterPositionalTypeChange(t *testing.T) {
+	before := map[string]hashlog.Block{
+		"build b": block("build b", "file b.go AAAA"),
+	}
+	after := map[string]hashlog.Block{
+		"build b": block("build b", "import config BBBB"),
+	}
+
+	changes := DiffBlocks(before, after)
+	if len(changes) != 1 || len(changes[0].Changed) != 1 {
+		t.Fatalf("expected one positional change, got %+v", changes)
+	}
+	if !changes[0].Changed[0].IsImport {
+		t.Errorf("current import must be marked as an import: %+v", changes[0].Changed[0])
+	}
+}
+
 func TestDiffFindsChangedConfiguration(t *testing.T) {
 	before := map[string]hashlog.Block{"build a": block("build a", "GOAMD64=v1")}
 	after := map[string]hashlog.Block{"build a": block("build a", "GOAMD64=v3")}
@@ -77,12 +94,18 @@ func TestDiffIgnoresUnchangedAndNewBlocks(t *testing.T) {
 }
 
 func TestRootsFindsCascadeStartAndCountsRebuiltDependents(t *testing.T) {
+	configID := actionID(t, "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803")
+	const configOutput = "config-output"
 	acts := []model.Action{
 		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1}},
-		{Package: "config", Kind: model.KindCompile, Ran: true},
+		{Package: "config", Kind: model.KindCompile, Ran: true, ActionID: configID, BuildID: configID + "/" + configOutput},
+	}
+	blocks := map[string]hashlog.Block{
+		"build app":    block("build app", "import config "+configOutput),
+		"build config": {Name: "build config", Digest: "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"},
 	}
 
-	roots := Roots(acts, nil)
+	roots := Roots(acts, blocks)
 	if len(roots) != 1 {
 		t.Fatalf("got %d roots, want 1: %+v", len(roots), roots)
 	}
@@ -91,6 +114,29 @@ func TestRootsFindsCascadeStartAndCountsRebuiltDependents(t *testing.T) {
 	}
 	if roots[0].Downstream != 1 {
 		t.Errorf("downstream = %d, want 1", roots[0].Downstream)
+	}
+}
+
+func TestRootsKeepIndependentlyRebuiltDependencyAndDependent(t *testing.T) {
+	configID := actionID(t, "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803")
+	acts := []model.Action{
+		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1}},
+		{Package: "config", Kind: model.KindCompile, Ran: true, ActionID: configID, BuildID: configID + "/config-output"},
+	}
+	blocks := map[string]hashlog.Block{
+		"build app":    block("build app", "import config different-output"),
+		"build config": {Name: "build config", Digest: "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"},
+	}
+
+	roots := Roots(acts, blocks)
+	if len(roots) != 2 {
+		t.Fatalf("unmatched import is not causal evidence; got %+v", roots)
+	}
+	if roots[0].Package != "app" || roots[1].Package != "config" {
+		t.Errorf("roots = %+v, want app and config", roots)
+	}
+	if roots[0].Downstream != 0 || roots[1].Downstream != 0 {
+		t.Errorf("independent rebuilds have no proven downstream actions: %+v", roots)
 	}
 }
 
@@ -105,13 +151,23 @@ func TestRootsIgnoreCachedAndNonWorkActions(t *testing.T) {
 	}
 }
 
-func TestRootsHandlesMissingHashDataAndInvalidDependencies(t *testing.T) {
+func TestRootsKeepActionsAsRootsWithoutHashData(t *testing.T) {
 	acts := []model.Action{
-		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{-1, 9}},
+		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1, -1, 9}},
+		{Package: "config", Kind: model.KindCompile, Ran: true},
 	}
 
 	roots := Roots(acts, nil)
-	if len(roots) != 1 || roots[0].Package != "app" {
-		t.Errorf("missing hash data and invalid dependencies must not hide a root; got %+v", roots)
+	if len(roots) != 2 || roots[0].Package != "app" || roots[1].Package != "config" {
+		t.Errorf("missing hash data must not claim a cascade; got %+v", roots)
 	}
+}
+
+func actionID(t *testing.T, digest string) string {
+	t.Helper()
+	id, err := hashlog.ActionID(digest)
+	if err != nil {
+		t.Fatalf("ActionID(%q): %v", digest, err)
+	}
+	return id
 }
