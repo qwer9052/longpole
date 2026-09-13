@@ -29,12 +29,16 @@ type Block struct {
 
 // Collector accumulates hash blocks as lines arrive.
 type Collector struct {
-	blocks map[string]*Block
+	blocks    map[string]*Block
+	ambiguous map[string]struct{}
 }
 
 // New returns an empty Collector.
 func New() *Collector {
-	return &Collector{blocks: make(map[string]*Block)}
+	return &Collector{
+		blocks:    make(map[string]*Block),
+		ambiguous: make(map[string]struct{}),
+	}
 }
 
 var (
@@ -86,12 +90,19 @@ func (c *Collector) Line(line []byte) {
 		return
 	}
 	name := string(line[len(prefixHash):end])
-	block := c.block(name)
 
 	rest := line[end+1:]
+	if len(rest) == 0 {
+		c.open(name)
+		return
+	}
 	if !bytes.HasPrefix(rest, []byte(": ")) {
 		return
 	}
+	if _, ambiguous := c.ambiguous[name]; ambiguous {
+		return
+	}
+	block := c.block(name)
 	value := string(rest[2:])
 	if strings.HasPrefix(value, `"`) {
 		input, err := strconv.Unquote(value)
@@ -108,6 +119,21 @@ func (c *Collector) Line(line []byte) {
 	}
 }
 
+func (c *Collector) open(name string) {
+	if _, ambiguous := c.ambiguous[name]; ambiguous {
+		return
+	}
+	if _, exists := c.blocks[name]; exists {
+		// The same key can represent distinct normal and test hashes. There is
+		// no stable instance identifier in gocachehash output, so returning a
+		// merged block would invent a false cause. Omit it instead.
+		delete(c.blocks, name)
+		c.ambiguous[name] = struct{}{}
+		return
+	}
+	c.blocks[name] = &Block{Name: name}
+}
+
 func (c *Collector) block(name string) *Block {
 	if block, ok := c.blocks[name]; ok {
 		return block
@@ -121,6 +147,9 @@ func (c *Collector) block(name string) *Block {
 func (c *Collector) Blocks() map[string]Block {
 	blocks := make(map[string]Block, len(c.blocks))
 	for name, block := range c.blocks {
+		if _, ambiguous := c.ambiguous[name]; ambiguous {
+			continue
+		}
 		blocks[name] = *block
 	}
 	return blocks

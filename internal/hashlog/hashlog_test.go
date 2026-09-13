@@ -115,6 +115,46 @@ func TestCollectorIgnoresNonHashLines(t *testing.T) {
 	}
 }
 
+func TestCollectorOmitsSequentialRepeatedName(t *testing.T) {
+	c := New()
+	for _, line := range []string{
+		"HASH[build example.com/reused]\n",
+		`HASH[build example.com/reused]: "first\n"` + "\n",
+		"HASH[build example.com/reused]: 0011223344556677889900112233445566778899001122334455667788990011\n",
+		"HASH[build example.com/reused]\n",
+		`HASH[build example.com/reused]: "second\n"` + "\n",
+		"HASH[build example.com/reused]: 1122334455667788990011223344556677889900112233445566778899001122\n",
+	} {
+		c.Line([]byte(line))
+	}
+
+	if _, ok := c.Blocks()["build example.com/reused"]; ok {
+		t.Error("repeated hash names must be omitted instead of merging two instances")
+	}
+}
+
+func TestCollectorOmitsOverlappingRepeatedName(t *testing.T) {
+	c := New()
+	for _, line := range []string{
+		"HASH[build example.com/reused]\n",
+		`HASH[build example.com/reused]: "first\n"` + "\n",
+		"HASH[build example.com/other]\n",
+		"HASH[build example.com/reused]\n",
+		`HASH[build example.com/reused]: "second\n"` + "\n",
+		"HASH[build example.com/other]: 0011223344556677889900112233445566778899001122334455667788990011\n",
+	} {
+		c.Line([]byte(line))
+	}
+
+	blocks := c.Blocks()
+	if _, ok := blocks["build example.com/reused"]; ok {
+		t.Error("overlapping repeated hash names must be omitted instead of mixing inputs")
+	}
+	if _, ok := blocks["build example.com/other"]; !ok {
+		t.Error("an unrelated block must remain available")
+	}
+}
+
 func BenchmarkCollectorLargeStream(b *testing.B) {
 	line := []byte(`HASH[build example.com/pkg]: "file x.go 9SqAMQcEh9zzRXLLCibe\n"` + "\n")
 	b.ReportAllocs()
