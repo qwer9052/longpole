@@ -30,9 +30,12 @@ const usage = `longpole — why was my Go build slow?
   longpole diff [A B]                compare two runs (default: previous run of the same command)
 `
 
-// keepRuns bounds history per project. Fifty is enough to see a trend and small
-// enough that the database stays trivial.
-const keepRuns = 50
+const (
+	// keepRuns preserves enough per-project history to compare recent changes.
+	keepRuns = 50
+	// keepRunsGlobal bounds the shared database when old worktrees accumulate.
+	keepRunsGlobal = 500
+)
 
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:]))
@@ -247,6 +250,7 @@ type runStore interface {
 	Save(store.Run, []model.Action) (int64, error)
 	Previous(string, int64) (int64, error)
 	Prune(string, int) error
+	PruneGlobal(int) error
 }
 
 func persist(ctx context.Context, argv []string, res wrap.Result, s model.Summary, acts []model.Action) (id, prev int64, err error) {
@@ -293,6 +297,9 @@ func saveRun(db runStore, r store.Run, acts []model.Action) (id, prev int64, err
 	}
 	if err := db.Prune(r.Scope, keepRuns); err != nil {
 		return 0, 0, fmt.Errorf("prune run history: %w", err)
+	}
+	if err := db.PruneGlobal(keepRunsGlobal); err != nil {
+		return 0, 0, fmt.Errorf("prune global run history: %w", err)
 	}
 	return id, prev, nil
 }

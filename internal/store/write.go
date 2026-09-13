@@ -83,11 +83,25 @@ func (s *Store) Prune(scope string, keep int) error {
 	if err != nil {
 		return fmt.Errorf("delete old runs: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM actions WHERE run_id NOT IN (SELECT id FROM runs)`); err != nil {
-		return fmt.Errorf("remove orphaned actions: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit prune: %w", err)
+	}
+	return nil
+}
+
+// PruneGlobal deletes all but the newest keep runs across every scope. It
+// prevents abandoned checkouts from growing the shared history indefinitely.
+func (s *Store) PruneGlobal(keep int) error {
+	if keep < 0 {
+		return fmt.Errorf("global prune keep must be non-negative: %d", keep)
+	}
+	_, err := s.db.Exec(`
+		DELETE FROM runs
+		WHERE id NOT IN (
+			SELECT id FROM runs ORDER BY id DESC LIMIT ?
+		)`, keep)
+	if err != nil {
+		return fmt.Errorf("delete globally old runs: %w", err)
 	}
 	return nil
 }

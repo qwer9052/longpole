@@ -291,6 +291,11 @@ func TestSaveRunSurfacesHistoryErrors(t *testing.T) {
 			db:   &historyErrorStore{pruneErr: errors.New("prune unavailable")},
 			want: "prune unavailable",
 		},
+		{
+			name: "global prune",
+			db:   &historyErrorStore{globalPruneErr: errors.New("global prune unavailable")},
+			want: "global prune unavailable",
+		},
 	}
 
 	for _, tt := range tests {
@@ -513,8 +518,9 @@ func TestRunDiffExplicitIDsRequireCurrentScope(t *testing.T) {
 }
 
 type historyErrorStore struct {
-	previousErr error
-	pruneErr    error
+	previousErr    error
+	pruneErr       error
+	globalPruneErr error
 }
 
 func (s *historyErrorStore) Save(store.Run, []model.Action) (int64, error) {
@@ -527,4 +533,8 @@ func (s *historyErrorStore) Previous(string, int64) (int64, error) {
 
 func (s *historyErrorStore) Prune(string, int) error {
 	return s.pruneErr
+}
+
+func (s *historyErrorStore) PruneGlobal(int) error {
+	return s.globalPruneErr
 }
