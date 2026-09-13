@@ -72,7 +72,9 @@ off the critical path does not make the build faster.
 
 ## Requirements
 
-Go 1.21 or newer. Verified against 1.21 through 1.27.
+Building or installing longpole from source requires Go 1.25 or newer.
+longpole supports profiling Go toolchains from Go 1.21 onward; that action-graph
+format is verified through Go 1.27.
 
 longpole reads `go build -debug-actiongraph`, which is undocumented and
 unsupported by the Go team. The record shape has been identical since Go 1.21.
