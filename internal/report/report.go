@@ -103,7 +103,7 @@ func writeKinds(b *strings.Builder, s model.Summary, acts []model.Action) {
 			continue
 		}
 		count := st.Count
-		label := actionWord(count)
+		label := fmt.Sprintf("%d %s", count, actionWord(count))
 		if k == model.KindCompile || k == model.KindLink {
 			ran := 0
 			for _, a := range acts {
@@ -242,6 +242,9 @@ func pkgName(a model.Action) string {
 	}
 	if a.Kind == model.KindLink {
 		return a.Package + " (link)"
+	}
+	if a.Kind == model.KindVet {
+		return a.Package + " (vet)"
 	}
 	return a.Package
 }

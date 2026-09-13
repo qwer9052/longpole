@@ -23,7 +23,7 @@ func CheckGoVersion(v string) error {
 		return nil
 	}
 	if minor < minMinor {
-		return fmt.Errorf("longpole needs Go %d.%d or newer; this is %s", 1, minMinor, v)
+		return fmt.Errorf("%s is older than any version this was tested against (Go %d.%d+); the report may be wrong", v, 1, minMinor)
 	}
 	return nil
 }
