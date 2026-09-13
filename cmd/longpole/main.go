@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/qwer9052/longpole/internal/actiongraph"
+	"github.com/qwer9052/longpole/internal/hashlog"
 	"github.com/qwer9052/longpole/internal/model"
 	"github.com/qwer9052/longpole/internal/report"
 	"github.com/qwer9052/longpole/internal/store"
@@ -22,10 +23,11 @@ import (
 
 const usage = `longpole — why was my Go build slow?
 
-  longpole go build ./...      profile a build
-  longpole go test ./...       profile a test build
-  longpole log                 list recent runs
-  longpole diff [A B]          compare two runs (default: the last two)
+  longpole go build ./...            profile a build
+  longpole go test ./...             profile a test build
+  longpole --explain go build ./...  also explain rebuild candidates (slower)
+  longpole log                       list recent runs
+  longpole diff [A B]                compare two runs (default: the last two)
 `
 
 // keepRuns bounds history per project. Fifty is enough to see a trend and small
@@ -33,30 +35,47 @@ const usage = `longpole — why was my Go build slow?
 const keepRuns = 50
 
 func main() {
-	args := os.Args[1:]
+	os.Exit(run(context.Background(), os.Args[1:]))
+}
+
+func run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		return 2
 	}
 	switch args[0] {
+	case "--explain":
+		if len(args) < 2 || args[1] != "go" {
+			fmt.Fprint(os.Stderr, "usage: longpole --explain go build ./...\n")
+			return 2
+		}
+		return runWrapExplain(ctx, args[1:])
 	case "go":
-		os.Exit(runWrap(context.Background(), args))
+		return runWrap(ctx, args)
 	case "log":
-		os.Exit(runLog(context.Background()))
+		return runLog(ctx)
 	case "diff":
-		os.Exit(runDiff(context.Background(), args[1:]))
+		return runDiff(ctx, args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
-		os.Exit(0)
+		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "longpole: unknown command %q\n\n%s", args[0], usage)
-		os.Exit(2)
+		return 2
 	}
 }
 
 // runWrap profiles a go command. Its contract: return the go command's exit
 // code, whatever happens to the profiling.
 func runWrap(ctx context.Context, argv []string) int {
+	return wrapWith(ctx, argv, false)
+}
+
+func runWrapExplain(ctx context.Context, argv []string) int {
+	return wrapWith(ctx, argv, true)
+}
+
+func wrapWith(ctx context.Context, argv []string, explain bool) int {
 	if _, err := wrap.Check(argv); err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 2
@@ -81,7 +100,31 @@ func runWrap(ctx context.Context, argv []string) int {
 		}
 	}
 
-	res, err := wrap.Run(ctx, cmdArgs, nil, nil)
+	var env []string
+	var tee *wrap.StderrTee
+	var hashes *hashlog.Collector
+	if explain {
+		godebug := "gocachehash=1"
+		if prior := os.Getenv("GODEBUG"); prior != "" {
+			godebug = prior + "," + godebug
+		}
+		env = append(env, "GODEBUG="+godebug)
+		hashes = hashlog.New()
+		tee = wrap.NewStderrTee(os.Stderr, func(line []byte) bool {
+			if !hashlog.IsHashLine(line) {
+				return false
+			}
+			hashes.Line(line)
+			return true
+		})
+	}
+
+	res, err := wrap.Run(ctx, cmdArgs, env, tee)
+	if tee != nil {
+		if flushErr := tee.Flush(); flushErr != nil {
+			fmt.Fprintf(os.Stderr, "longpole: copy stderr from %s: %v\n", cmdArgs[0], flushErr)
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 1
@@ -114,13 +157,21 @@ func runWrap(ctx context.Context, argv []string) int {
 			return res.ExitCode
 		}
 	}
-	return finishRun(ctx, graphPath, argv, res, persist, os.Stderr)
+	var blocks map[string]hashlog.Block
+	if hashes != nil {
+		blocks = hashes.Blocks()
+	}
+	return finishRunWith(ctx, graphPath, argv, res, persist, os.Stderr, explain, blocks)
 }
 
 type persistFunc func(context.Context, []string, wrap.Result, model.Summary, []model.Action) (int64, int64, error)
 
 func finishRun(ctx context.Context, graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) int {
-	if err := analyze(ctx, graphPath, argv, res, record, stderr); err != nil {
+	return finishRunWith(ctx, graphPath, argv, res, record, stderr, false, nil)
+}
+
+func finishRunWith(ctx context.Context, graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer, explain bool, blocks map[string]hashlog.Block) int {
+	if err := analyze(ctx, graphPath, argv, res, record, stderr, explain, blocks); err != nil {
 		fmt.Fprintf(stderr, "longpole: %v\n", err)
 	}
 	return res.ExitCode
@@ -150,7 +201,7 @@ func (before graphFileState) updatedBy(after graphFileState) bool {
 	return !before.exists || before.size != after.size || !before.modTime.Equal(after.modTime)
 }
 
-func analyze(ctx context.Context, graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer) error {
+func analyze(ctx context.Context, graphPath string, argv []string, res wrap.Result, record persistFunc, stderr io.Writer, explain bool, blocks map[string]hashlog.Block) error {
 	raw, err := actiongraph.ParseFile(graphPath)
 	if err != nil {
 		return fmt.Errorf("could not read the action graph: %w", err)
@@ -158,10 +209,12 @@ func analyze(ctx context.Context, graphPath string, argv []string, res wrap.Resu
 	acts := model.NewAll(raw)
 	s := model.Summarize(acts, res.WallNs)
 	opt := report.Options{
-		TopN:     5,
-		PathN:    5,
-		Cores:    runtime.GOMAXPROCS(0),
-		ExitCode: res.ExitCode,
+		TopN:       5,
+		PathN:      5,
+		Cores:      runtime.GOMAXPROCS(0),
+		ExitCode:   res.ExitCode,
+		ShowRoots:  explain,
+		HashBlocks: blocks,
 	}
 
 	// Persistence is best-effort: a report the user can read matters more than

@@ -5,7 +5,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/qwer9052/longpole/internal/cause"
 	"github.com/qwer9052/longpole/internal/critpath"
+	"github.com/qwer9052/longpole/internal/hashlog"
 	"github.com/qwer9052/longpole/internal/model"
 )
 
@@ -17,6 +19,10 @@ type Options struct {
 	ExitCode int // the wrapped go command's exit code
 	RunID    int64
 	PrevID   int64
+	// ShowRoots prints the conservative rebuild-candidate frontier collected
+	// under --explain. HashBlocks supplies the corresponding hash evidence.
+	ShowRoots  bool
+	HashBlocks map[string]hashlog.Block
 }
 
 // Run renders the single-build report.
@@ -54,6 +60,9 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	writeCriticalPath(&b, acts, s, opt)
 	writeParallelism(&b, s, opt)
 	writeBiggest(&b, acts, opt)
+	if opt.ShowRoots {
+		writeRoots(&b, acts, opt.HashBlocks)
+	}
 	writeFooter(&b, opt)
 
 	return b.String()
@@ -141,6 +150,32 @@ func writeBiggest(b *strings.Builder, acts []model.Action, opt Options) {
 			blocks = fmt.Sprintf(", blocks %d", radius[a.ID])
 		}
 		fmt.Fprintf(b, "    %7s  %s%s\n", Dur(a.WorkNs), pkgName(a), blocks)
+	}
+}
+
+func writeRoots(b *strings.Builder, acts []model.Action, blocks map[string]hashlog.Block) {
+	roots := cause.Roots(acts, blocks)
+	if len(roots) == 0 {
+		return
+	}
+	b.WriteString("\n  why it rebuilt (candidate roots)\n")
+	n := len(roots)
+	if n > 3 {
+		n = 3
+	}
+	for _, root := range roots[:n] {
+		if root.Package == "" {
+			continue
+		}
+		if root.Downstream > 0 {
+			fmt.Fprintf(b, "    %s  (candidate root; %d %s followed)\n",
+				root.Package, root.Downstream, actionWord(root.Downstream))
+			continue
+		}
+		fmt.Fprintf(b, "    %s  (candidate root)\n", root.Package)
+	}
+	if rest := len(roots) - n; rest > 0 {
+		fmt.Fprintf(b, "    + %d more candidate roots\n", rest)
 	}
 }
 

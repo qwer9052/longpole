@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -51,6 +52,51 @@ func TestRunWrapSetupFailureStillRunsChild(t *testing.T) {
 	}
 	if !strings.Contains(string(warning), "create action graph temporary directory") {
 		t.Errorf("stderr = %q, want setup warning", warning)
+	}
+}
+
+func TestRunExplainRequiresGoCommand(t *testing.T) {
+	if got := run(context.Background(), []string{"--explain", "build", "./..."}); got != 2 {
+		t.Errorf("exit code = %d, want 2", got)
+	}
+}
+
+func TestRunWrapExplainSuppressesOnlyHashLines(t *testing.T) {
+	if os.Getenv("LONGPOLE_EXPLAIN_TEST_CHILD") == "1" {
+		fmt.Fprintln(os.Stderr, "HASH[build example.com/project]")
+		fmt.Fprintln(os.Stderr, "HASH regular diagnostic")
+		os.Exit(7)
+	}
+
+	t.Setenv("LONGPOLE_EXPLAIN_TEST_CHILD", "1")
+	readStderr, writeStderr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writeStderr
+	defer func() { os.Stderr = originalStderr }()
+
+	got := runWrapExplain(context.Background(), []string{os.Args[0], "build"})
+	if err := writeStderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := io.ReadAll(readStderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readStderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got != 7 {
+		t.Errorf("exit code = %d, want child exit code 7", got)
+	}
+	if strings.Contains(string(stderr), "HASH[build") {
+		t.Errorf("strict HASH line reached the user: %q", stderr)
+	}
+	if !strings.Contains(string(stderr), "HASH regular diagnostic") {
+		t.Errorf("non-HASH diagnostic was swallowed: %q", stderr)
 	}
 }
 
