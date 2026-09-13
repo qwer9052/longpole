@@ -99,11 +99,26 @@ func TestIsHashLine(t *testing.T) {
 		"HASHER is not a hash line",
 		"HASH file.go: not-a-digest",
 		"",
+		"HASH[not closed",
+		"HASH[build x] user output",
+		"HASH subkey ",
 	}
 	for _, line := range no {
 		if IsHashLine([]byte(line)) {
 			t.Errorf("must pass through to the user: %q", line)
 		}
+	}
+}
+
+func TestRootsOnlyCollectorRetainsDependencyEvidence(t *testing.T) {
+	c := NewRootsOnly()
+	c.Line([]byte("HASH[build x]\n"))
+	c.Line([]byte(`HASH[build x]: "file x.go abc"` + "\n"))
+	c.Line([]byte(`HASH[build x]: "import y def"` + "\n"))
+	c.Line([]byte(`HASH[build x]: "packagefile z=ghi"` + "\n"))
+	block := c.Blocks()["build x"]
+	if len(block.Inputs) != 2 || block.Inputs[0] != "import y def" || block.Inputs[1] != "packagefile z=ghi" {
+		t.Fatalf("retained inputs = %v", block.Inputs)
 	}
 }
 

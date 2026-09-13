@@ -80,14 +80,18 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 2
 	}
-	if err := wrap.CheckGoVersion(runtime.Version()); err != nil {
+	goVersion := runtime.Version()
+	if actual, err := wrap.CommandVersion(ctx, argv[0]); err == nil {
+		goVersion = actual
+	}
+	if err := wrap.CheckGoVersion(goVersion); err != nil {
 		fmt.Fprintf(os.Stderr, "longpole: %v\n", err)
 		return 2
 	}
-	if wrap.UnverifiedGoVersion(runtime.Version()) {
+	if wrap.UnverifiedGoVersion(goVersion) {
 		fmt.Fprintf(os.Stderr,
 			"longpole: %s is newer than any version this was tested against; "+
-				"the report may be wrong\n", runtime.Version())
+				"the report may be wrong\n", goVersion)
 	}
 
 	cmdArgs := argv
@@ -118,7 +122,7 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 			godebug = prior + "," + godebug
 		}
 		env = append(env, "GODEBUG="+godebug)
-		hashes = hashlog.New()
+		hashes = hashlog.NewRootsOnly()
 		tee = wrap.NewStderrTee(os.Stderr, func(line []byte) bool {
 			if !hashlog.IsHashLine(line) {
 				return false

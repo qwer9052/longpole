@@ -31,13 +31,28 @@ type Block struct {
 type Collector struct {
 	blocks    map[string]*Block
 	ambiguous map[string]struct{}
+	retain    func(string) bool
 }
 
 // New returns an empty Collector.
 func New() *Collector {
+	return newCollector(nil)
+}
+
+// NewRootsOnly returns a collector that retains only dependency evidence and
+// digests needed by the rebuild-candidate analysis. This keeps --explain's
+// memory proportional to the dependency graph rather than every hash input.
+func NewRootsOnly() *Collector {
+	return newCollector(func(input string) bool {
+		return strings.HasPrefix(input, "import ") || strings.HasPrefix(input, "packagefile ")
+	})
+}
+
+func newCollector(retain func(string) bool) *Collector {
 	return &Collector{
 		blocks:    make(map[string]*Block),
 		ambiguous: make(map[string]struct{}),
+		retain:    retain,
 	}
 }
 
@@ -54,8 +69,16 @@ func IsHashLine(line []byte) bool {
 	if len(line) == 0 {
 		return false
 	}
-	if bytes.HasPrefix(line, prefixHash) || bytes.HasPrefix(line, prefixSubkey) {
-		return true
+	if bytes.HasPrefix(line, prefixHash) {
+		end := bytes.IndexByte(line[len(prefixHash):], ']')
+		if end < 0 {
+			return false
+		}
+		rest := line[len(prefixHash)+end+1:]
+		return len(rest) == 0 || bytes.HasPrefix(rest, []byte(": "))
+	}
+	if bytes.HasPrefix(line, prefixSubkey) {
+		return len(line) > len(prefixSubkey)
 	}
 	if !bytes.HasPrefix(line, prefixFile) {
 		return false
@@ -111,7 +134,9 @@ func (c *Collector) Line(line []byte) {
 			// its position without making analysis fail.
 			input = value
 		}
-		block.Inputs = append(block.Inputs, input)
+		if c.retain == nil || c.retain(input) {
+			block.Inputs = append(block.Inputs, input)
+		}
 		return
 	}
 	if isHex64(rest[2:]) {
