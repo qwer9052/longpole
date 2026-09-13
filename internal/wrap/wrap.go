@@ -30,10 +30,11 @@ var buildingSubcommands = map[string]bool{
 // Check validates that argv is a go command longpole can profile, and returns
 // the subcommand.
 func Check(argv []string) (string, error) {
-	if len(argv) < 2 {
-		return "", fmt.Errorf("usage: longpole go build ./...")
+	i, err := subcommandIndex(argv)
+	if err != nil {
+		return "", err
 	}
-	sub := argv[1]
+	sub := argv[i]
 	if !buildingSubcommands[sub] {
 		return "", fmt.Errorf("`go %s` does not build anything, so there is nothing to profile", sub)
 	}
@@ -50,20 +51,25 @@ func Inject(argv []string, graphPath string) ([]string, string) {
 	if path, ok := ExistingGraphPath(argv); ok {
 		return argv, path
 	}
-	if len(argv) < 2 {
+	i, err := subcommandIndex(argv)
+	if err != nil {
 		return argv, graphPath
 	}
 	out := make([]string, 0, len(argv)+1)
-	out = append(out, argv[0], argv[1])
+	out = append(out, argv[:i+1]...)
 	out = append(out, flagName+"="+graphPath)
-	out = append(out, argv[2:]...)
+	out = append(out, argv[i+1:]...)
 	return out, graphPath
 }
 
 // ExistingGraphPath returns a user-supplied action graph path. Arguments after
 // -args or -- belong to the built program or test binary, not to the go command.
 func ExistingGraphPath(argv []string) (string, bool) {
-	for i := 2; i < len(argv); i++ {
+	i, err := subcommandIndex(argv)
+	if err != nil {
+		return "", false
+	}
+	for i++; i < len(argv); i++ {
 		a := argv[i]
 		if a == "-args" || a == "--" {
 			break
@@ -76,6 +82,46 @@ func ExistingGraphPath(argv []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// subcommandIndex skips the go command's leading -C flag. -C changes the
+// working directory before the subcommand runs, so it is not a subcommand
+// itself and injecting before it would make a valid command invalid.
+func subcommandIndex(argv []string) (int, error) {
+	i, _, err := commandParts(argv)
+	return i, err
+}
+
+// commandParts finds the subcommand and every leading change-directory flag.
+// The go command accepts either one or two leading dashes for -C; keeping the
+// aliases together avoids letting validation, injection, and scope disagree.
+func commandParts(argv []string) (int, []string, error) {
+	if len(argv) < 2 {
+		return 0, nil, fmt.Errorf("usage: longpole go build ./...")
+	}
+	var dirs []string
+	for i := 1; i < len(argv); {
+		switch argv[i] {
+		case "-C", "--C":
+			if i+1 >= len(argv) || argv[i+1] == "" {
+				return 0, nil, fmt.Errorf("`go -C` requires a directory")
+			}
+			dirs = append(dirs, argv[i+1])
+			i += 2
+		default:
+			if strings.HasPrefix(argv[i], "-C=") || strings.HasPrefix(argv[i], "--C=") {
+				_, dir, _ := strings.Cut(argv[i], "=")
+				if dir == "" {
+					return 0, nil, fmt.Errorf("`go -C` requires a directory")
+				}
+				dirs = append(dirs, dir)
+				i++
+				continue
+			}
+			return i, dirs, nil
+		}
+	}
+	return 0, nil, fmt.Errorf("usage: longpole go build ./...")
 }
 
 // Result is what the wrapped command produced.

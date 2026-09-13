@@ -33,6 +33,42 @@ func TestInjectIntoGoTest(t *testing.T) {
 	}
 }
 
+func TestLeadingChangeDirectoryFlagKeepsSubcommandHandling(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix []string
+	}{
+		{name: "short separate", prefix: []string{"-C", "internal/model"}},
+		{name: "short equals", prefix: []string{"-C=internal/model"}},
+		{name: "long separate", prefix: []string{"--C", "internal/model"}},
+		{name: "long equals", prefix: []string{"--C=internal/model"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			argv := append([]string{"go"}, tt.prefix...)
+			argv = append(argv, "build", "-debug-actiongraph=mine.json", ".")
+			if sub, err := Check(argv); err != nil || sub != "build" {
+				t.Fatalf("Check = %q, %v; want build, nil", sub, err)
+			}
+			if path, ok := ExistingGraphPath(argv); !ok || path != "mine.json" {
+				t.Fatalf("ExistingGraphPath = %q, %t; want mine.json, true", path, ok)
+			}
+
+			injectArgs := append([]string{"go"}, tt.prefix...)
+			injectArgs = append(injectArgs, "build", ".")
+			got, path := Inject(injectArgs, "/tmp/ag.json")
+			want := append([]string{"go"}, tt.prefix...)
+			want = append(want, "build", "-debug-actiongraph=/tmp/ag.json", ".")
+			if strings.Join(got, " ") != strings.Join(want, " ") {
+				t.Errorf("Inject = %v, want %v", got, want)
+			}
+			if path != "/tmp/ag.json" {
+				t.Errorf("path = %q, want injected path", path)
+			}
+		})
+	}
+}
+
 // If the user already asked for a graph, use theirs rather than fighting over
 // the flag. The go command would reject two of them anyway.
 func TestRespectsExistingFlag(t *testing.T) {

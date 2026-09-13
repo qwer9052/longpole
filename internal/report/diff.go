@@ -19,6 +19,7 @@ type DiffInput struct {
 // change is one action that behaved differently between the two runs.
 type change struct {
 	Package        string
+	Deps           []int
 	WorkNs         int64
 	WasCached      bool
 	OldAction      string
@@ -55,7 +56,7 @@ func Diff(in DiffInput) string {
 	confirmed, ambiguous := splitChanges(changes)
 	if len(confirmed) > 0 {
 		writeChanges(&b, "ran this time, did not run last time", confirmed, in.TopN)
-		writeIdentityNote(&b, confirmed)
+		writeIdentityNote(&b, confirmed, in.Before, in.After)
 	}
 	if len(ambiguous) > 0 {
 		writeChanges(&b, "ambiguous action variants (not counted as additional work)", ambiguous, in.TopN)
@@ -177,7 +178,7 @@ func findChanges(before, after []model.Action) []change {
 			continue
 		}
 
-		c := change{Package: pkgName(a), WorkNs: a.WorkNs, NewAction: a.ActionID}
+		c := change{Package: pkgName(a), Deps: a.Deps, WorkNs: a.WorkNs, NewAction: a.ActionID}
 		if matched {
 			old := previous[beforeIndex]
 			c.WasCached = old.Cached
@@ -219,15 +220,49 @@ func previousStatus(c change) string {
 	return "did not run last time"
 }
 
-// writeIdentityNote explains the mechanism behind the rebuilds. Without this
-// the reader is told what happened but not why it could have happened.
-func writeIdentityNote(b *strings.Builder, changes []change) {
+// writeIdentityNote names only a candidate root. Every direct work dependency
+// must retain a stable identity across both complete graphs; looking only at
+// newly-run actions would miss dependencies that ran in both builds.
+// The graph alone cannot identify which hash input changed, so it must not
+// promise that --explain can do so.
+func writeIdentityNote(b *strings.Builder, changes []change, before, after []model.Action) {
 	for _, c := range changes {
-		if c.OldAction != "" && c.NewAction != "" && c.OldAction != c.NewAction {
-			fmt.Fprintf(b, "\n  identity changed  %s\n", c.Package)
-			fmt.Fprintf(b, "    %s -> %s\n", c.OldAction, c.NewAction)
-			b.WriteString("    run with --explain to see which input changed\n")
-			return
+		if c.OldAction == "" || c.NewAction == "" || c.OldAction == c.NewAction {
+			continue
+		}
+		if !dependenciesStable(before, after, c.Deps) {
+			continue
+		}
+		fmt.Fprintf(b, "\n  candidate root  %s\n", c.Package)
+		fmt.Fprintf(b, "    %s -> %s\n", c.OldAction, c.NewAction)
+		b.WriteString("    action identity changed; direct work dependencies were unchanged\n")
+		return
+	}
+}
+
+func dependenciesStable(before, after []model.Action, deps []int) bool {
+	for _, dependency := range deps {
+		if dependency < 0 || dependency >= len(after) {
+			return false
+		}
+		if !isWorkAction(after[dependency]) {
+			continue
+		}
+		if !actionStable(before, after[dependency]) {
+			return false
 		}
 	}
+	return true
+}
+
+func actionStable(before []model.Action, current model.Action) bool {
+	if current.ActionID == "" {
+		return false
+	}
+	for _, prior := range before {
+		if isWorkAction(prior) && keyFor(prior) == keyFor(current) && prior.ActionID == current.ActionID {
+			return true
+		}
+	}
+	return false
 }

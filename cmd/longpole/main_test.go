@@ -61,6 +61,12 @@ func TestRunExplainRequiresGoCommand(t *testing.T) {
 	}
 }
 
+func TestUsageDescribesSameCommandDefaultDiff(t *testing.T) {
+	if !strings.Contains(usage, "previous run of the same command") {
+		t.Errorf("diff usage should describe same-command matching; got:\n%s", usage)
+	}
+}
+
 func TestRunWrapExplainSuppressesOnlyHashLines(t *testing.T) {
 	if os.Getenv("LONGPOLE_EXPLAIN_TEST_CHILD") == "1" {
 		fmt.Fprintln(os.Stderr, "HASH[build example.com/project]")
@@ -120,6 +126,53 @@ func TestRunWrapExistingGraphFlagDoesNotNeedTempDirectory(t *testing.T) {
 	})
 	if got != 1 {
 		t.Errorf("exit code = %d, want child exit code 1", got)
+	}
+}
+
+func TestRunWrapResolvesRelativeGraphPathFromChangeDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/relative-graph\n\ngo 1.25\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hello.go"), []byte("package hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readStderr, writeStderr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writeStderr
+	defer func() { os.Stderr = originalStderr }()
+
+	goName := "go"
+	if runtime.GOOS == "windows" {
+		goName += ".exe"
+	}
+	goPath := filepath.Join(runtime.GOROOT(), "bin", goName)
+	got := runWrap(context.Background(), []string{
+		goPath, "-C", dir, "build", "-debug-actiongraph=graph.json", ".",
+	})
+	if err := writeStderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := io.ReadAll(readStderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readStderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got != 0 {
+		t.Errorf("exit code = %d, want 0; stderr = %q", got, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "graph.json")); err != nil {
+		t.Fatalf("relative graph was not written under -C directory: %v", err)
+	}
+	if strings.Contains(string(stderr), "skipping analysis") || !strings.Contains(string(stderr), "build:") {
+		t.Errorf("relative graph was not analyzed: %q", stderr)
 	}
 }
 
@@ -329,6 +382,65 @@ func TestRunDiffComparesTwoMostRecentScopedRuns(t *testing.T) {
 	wantRuns := "run " + strconv.FormatInt(beforeID, 10) + " -> run " + strconv.FormatInt(afterID, 10)
 	if !strings.Contains(out, wantRuns) || !strings.Contains(out, "a") {
 		t.Errorf("diff = %q, want %q and package a", out, wantRuns)
+	}
+}
+
+func TestRunDiffDefaultsToPreviousRunOfSameCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeID, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Save(store.Run{Scope: "target", Command: "go test ./..."}, nil); err != nil {
+		t.Fatal(err)
+	}
+	afterID, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if got := runDiffFrom(path, "target", nil, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", got, stderr.String())
+	}
+	want := "run " + strconv.FormatInt(beforeID, 10) + " -> run " + strconv.FormatInt(afterID, 10)
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("diff = %q, want matching-command runs %q", stdout.String(), want)
+	}
+}
+
+func TestRunDiffNotesDifferentCommandsForExplicitIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeID, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterID, err := db.Save(store.Run{Scope: "target", Command: "go test ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	args := []string{strconv.FormatInt(beforeID, 10), strconv.FormatInt(afterID, 10)}
+	if got := runDiffFrom(path, "target", args, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", got, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "note: comparing different commands") {
+		t.Errorf("diff = %q, want different-command note", stdout.String())
 	}
 }
 
