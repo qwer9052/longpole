@@ -16,14 +16,16 @@ type DiffInput struct {
 	TopN                      int
 }
 
-// change is one package that behaved differently between the two runs.
+// change is one action that behaved differently between the two runs.
 type change struct {
-	Package   string
-	WorkNs    int64
-	WasCached bool
-	OldAction string
-	NewAction string
-	IsNew     bool
+	Package        string
+	WorkNs         int64
+	WasCached      bool
+	OldAction      string
+	NewAction      string
+	IsNewPackage   bool
+	IsNewAction    bool
+	VariantUnknown bool
 }
 
 type actionKey struct {
@@ -46,7 +48,7 @@ func Diff(in DiffInput) string {
 
 	changes := findChanges(in.Before, in.After)
 	if len(changes) == 0 {
-		b.WriteString("\n  no packages changed between these runs\n\n")
+		b.WriteString("\n  no additional actions ran between these runs\n\n")
 		return b.String()
 	}
 
@@ -54,8 +56,8 @@ func Diff(in DiffInput) string {
 	for _, c := range changes {
 		totalWork += c.WorkNs
 	}
-	fmt.Fprintf(&b, "\n  ran this time, did not run last time     %d packages, +%s\n",
-		len(changes), Dur(totalWork))
+	fmt.Fprintf(&b, "\n  ran this time, did not run last time     %d %s, +%s\n",
+		len(changes), actionWord(len(changes)), Dur(totalWork))
 
 	n := in.TopN
 	if n < 0 {
@@ -76,43 +78,118 @@ func Diff(in DiffInput) string {
 	return b.String()
 }
 
-// findChanges returns packages that ran in the later build but did not in the
+// findChanges returns actions that ran in the later build but did not in the
 // earlier one, heaviest first. Those are the ones that cost time this run and
 // did not last run, which is the question a diff exists to answer.
 func findChanges(before, after []model.Action) []change {
-	previous := make(map[actionKey]model.Action, len(before))
+	previous := make([]model.Action, 0, len(before))
+	knownPackages := make(map[string]bool, len(before))
+	knownActions := make(map[actionKey]bool, len(before))
+	byIdentity := make(map[actionKey]map[string][]int, len(before))
 	for _, a := range before {
-		if a.Kind != model.KindCompile && a.Kind != model.KindLink {
+		if !isWorkAction(a) {
 			continue
 		}
-		previous[actionKey{packageName: a.Package, mode: a.Mode}] = a
+		index := len(previous)
+		previous = append(previous, a)
+		key := keyFor(a)
+		knownPackages[a.Package] = true
+		knownActions[key] = true
+		if a.ActionID == "" {
+			continue
+		}
+		if byIdentity[key] == nil {
+			byIdentity[key] = make(map[string][]int)
+		}
+		byIdentity[key][a.ActionID] = append(byIdentity[key][a.ActionID], index)
+	}
+
+	matchedBefore := make([]bool, len(previous))
+	matches := make(map[int]int, len(after))
+	// Match stable identities first: test variants can share package and mode
+	// with regular builds, so pairing by either alone can invent a transition.
+	for i, a := range after {
+		if !isWorkAction(a) || a.ActionID == "" {
+			continue
+		}
+		key := keyFor(a)
+		for _, beforeIndex := range byIdentity[key][a.ActionID] {
+			if !matchedBefore[beforeIndex] {
+				matches[i] = beforeIndex
+				matchedBefore[beforeIndex] = true
+				break
+			}
+		}
+	}
+	unmatchedByKey := make(map[actionKey][]int, len(previous))
+	for i, a := range previous {
+		if !matchedBefore[i] {
+			key := keyFor(a)
+			unmatchedByKey[key] = append(unmatchedByKey[key], i)
+		}
+	}
+	for i, a := range after {
+		if !isWorkAction(a) {
+			continue
+		}
+		if _, ok := matches[i]; ok {
+			continue
+		}
+		key := keyFor(a)
+		candidates := unmatchedByKey[key]
+		// A unique remaining candidate is the only evidence strong enough to
+		// describe an identity change. Multiple variants remain ambiguous.
+		if len(candidates) == 1 {
+			matches[i] = candidates[0]
+			unmatchedByKey[key] = nil
+		}
 	}
 
 	var out []change
-	for _, a := range after {
-		if !a.Ran || a.Package == "" || (a.Kind != model.KindCompile && a.Kind != model.KindLink) {
+	for i, a := range after {
+		if !a.Ran || !isWorkAction(a) {
 			continue
 		}
-		old, existed := previous[actionKey{packageName: a.Package, mode: a.Mode}]
-		if existed && old.Ran {
+		beforeIndex, matched := matches[i]
+		if matched && previous[beforeIndex].Ran {
 			continue
 		}
-		out = append(out, change{
-			Package:   pkgName(a),
-			WorkNs:    a.WorkNs,
-			WasCached: old.Cached,
-			OldAction: old.ActionID,
-			NewAction: a.ActionID,
-			IsNew:     !existed,
-		})
+
+		c := change{Package: pkgName(a), WorkNs: a.WorkNs, NewAction: a.ActionID}
+		if matched {
+			old := previous[beforeIndex]
+			c.WasCached = old.Cached
+			c.OldAction = old.ActionID
+		} else if !knownPackages[a.Package] {
+			c.IsNewPackage = true
+		} else if !knownActions[keyFor(a)] {
+			c.IsNewAction = true
+		} else {
+			c.VariantUnknown = true
+		}
+		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].WorkNs > out[j].WorkNs })
 	return out
 }
 
+func isWorkAction(a model.Action) bool {
+	return a.Package != "" && (a.Kind == model.KindCompile || a.Kind == model.KindLink)
+}
+
+func keyFor(a model.Action) actionKey {
+	return actionKey{packageName: a.Package, mode: a.Mode}
+}
+
 func previousStatus(c change) string {
-	if c.IsNew {
+	if c.IsNewPackage {
 		return "new package"
+	}
+	if c.IsNewAction {
+		return "new action"
+	}
+	if c.VariantUnknown {
+		return "previous variant unknown"
 	}
 	if c.WasCached {
 		return "cached last time"

@@ -41,7 +41,7 @@ func TestDiffReportsNoChange(t *testing.T) {
 		BeforeWallNs: 500_000_000, AfterWallNs: 510_000_000,
 		Before: same, After: same, TopN: 5,
 	})
-	if !strings.Contains(out, "no packages changed") {
+	if !strings.Contains(out, "no additional actions ran") {
 		t.Errorf("identical runs should say so; got:\n%s", out)
 	}
 }
@@ -117,7 +117,7 @@ func TestDiffKeepsCompileAndLinkActionsDistinct(t *testing.T) {
 	if !strings.Contains(out, "app (link)") {
 		t.Errorf("link action should be disambiguated; got:\n%s", out)
 	}
-	if !strings.Contains(out, "2 packages") {
+	if !strings.Contains(out, "2 actions") {
 		t.Errorf("compile and link actions should both be listed; got:\n%s", out)
 	}
 }
@@ -133,5 +133,39 @@ func TestDiffMatchesDuplicateLinkPackageByMode(t *testing.T) {
 	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
 	if !strings.Contains(out, "link-old -> link-new") {
 		t.Errorf("link action should retain its previous identity; got:\n%s", out)
+	}
+}
+
+func TestDiffMatchesDuplicatePackageVariantsByActionID(t *testing.T) {
+	before := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Cached: true, ActionID: "regular-old"},
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Cached: true, ActionID: "test-unchanged"},
+	}
+	after := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, WorkNs: 1_000_000_000, ActionID: "regular-new"},
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Cached: true, ActionID: "test-unchanged"},
+	}
+	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
+	if !strings.Contains(out, "regular-old -> regular-new") {
+		t.Errorf("changed variant should retain its matching old identity; got:\n%s", out)
+	}
+	if strings.Contains(out, "test-unchanged -> regular-new") {
+		t.Errorf("unchanged variant must not be used as the prior identity; got:\n%s", out)
+	}
+}
+
+func TestDiffDoesNotClaimUnchangedWhenBothRunsRan(t *testing.T) {
+	before := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, ActionID: "old"},
+	}
+	after := []model.Action{
+		{Package: "p", Mode: "build", Kind: model.KindCompile, Ran: true, ActionID: "new"},
+	}
+	out := Diff(DiffInput{Before: before, After: after, TopN: 5})
+	if !strings.Contains(out, "no additional actions ran") {
+		t.Errorf("runs that both rebuilt should not be called unchanged; got:\n%s", out)
+	}
+	if strings.Contains(out, "no packages changed") {
+		t.Errorf("runs with changed identities must not be called unchanged; got:\n%s", out)
 	}
 }
