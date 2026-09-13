@@ -150,7 +150,7 @@ func causalDependents(actions []model.Action, ran []bool, blocks map[string]hash
 			continue
 		}
 		block, ok := blockForAction(blocks, action)
-		if !ok {
+		if !ok || !blockMatchesAction(block, action) {
 			continue
 		}
 		imports := importedOutputs(block)
@@ -194,21 +194,26 @@ func importedOutputs(block hashlog.Block) map[string]map[string]bool {
 
 func actionOutput(action model.Action, blocks map[string]hashlog.Block) (string, bool) {
 	block, ok := blockForAction(blocks, action)
-	if !ok {
+	if !ok || !blockMatchesAction(block, action) {
 		return "", false
 	}
+	_, output, _ := strings.Cut(action.BuildID, "/")
+	return output, true
+}
+
+func blockMatchesAction(block hashlog.Block, action model.Action) bool {
 	digestID, err := hashlog.ActionID(block.Digest)
 	if err != nil {
-		return "", false
+		return false
 	}
 	buildActionID, output, ok := strings.Cut(action.BuildID, "/")
 	if !ok || output == "" || digestID != buildActionID {
-		return "", false
+		return false
 	}
 	if action.ActionID != "" && action.ActionID != digestID {
-		return "", false
+		return false
 	}
-	return output, true
+	return true
 }
 
 func countDownstream(dependents [][]int, ran []bool, start int) int {

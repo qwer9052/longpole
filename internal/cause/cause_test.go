@@ -94,14 +94,16 @@ func TestDiffIgnoresUnchangedAndNewBlocks(t *testing.T) {
 }
 
 func TestRootsFindsCascadeStartAndCountsRebuiltDependents(t *testing.T) {
+	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
+	appID := actionID(t, appDigest)
 	configID := actionID(t, "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803")
 	const configOutput = "config-output"
 	acts := []model.Action{
-		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1}},
+		{Package: "app", Kind: model.KindCompile, Ran: true, ActionID: appID, BuildID: appID + "/app-output", Deps: []int{1}},
 		{Package: "config", Kind: model.KindCompile, Ran: true, ActionID: configID, BuildID: configID + "/" + configOutput},
 	}
 	blocks := map[string]hashlog.Block{
-		"build app":    block("build app", "import config "+configOutput),
+		"build app":    {Name: "build app", Inputs: []string{"import config " + configOutput}, Digest: appDigest},
 		"build config": {Name: "build config", Digest: "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"},
 	}
 
@@ -114,6 +116,37 @@ func TestRootsFindsCascadeStartAndCountsRebuiltDependents(t *testing.T) {
 	}
 	if roots[0].Downstream != 1 {
 		t.Errorf("downstream = %d, want 1", roots[0].Downstream)
+	}
+}
+
+func TestRootsRequireDependentBlockIdentity(t *testing.T) {
+	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
+	const configDigest = "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"
+	appID := actionID(t, appDigest)
+	configID := actionID(t, configDigest)
+	acts := []model.Action{
+		{Package: "app", Kind: model.KindCompile, Ran: true, ActionID: appID, BuildID: appID + "/app-output", Deps: []int{1}},
+		{Package: "config", Kind: model.KindCompile, Ran: true, ActionID: configID, BuildID: configID + "/config-output"},
+	}
+
+	for _, tt := range []struct {
+		name   string
+		digest string
+	}{
+		{name: "missing digest"},
+		{name: "mismatched digest", digest: configDigest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			blocks := map[string]hashlog.Block{
+				"build app":    {Name: "build app", Inputs: []string{"import config config-output"}, Digest: tt.digest},
+				"build config": {Name: "build config", Digest: configDigest},
+			}
+
+			roots := Roots(acts, blocks)
+			if len(roots) != 2 || roots[0].Package != "app" || roots[1].Package != "config" {
+				t.Errorf("unverified dependent block must not hide a root: %+v", roots)
+			}
+		})
 	}
 }
 
