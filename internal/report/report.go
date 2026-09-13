@@ -51,12 +51,14 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	if s.FullyCached {
 		b.WriteString("\n  nothing to optimize — everything came from cache\n")
 		probe := s.ByKind[model.KindCacheProbe]
-		fmt.Fprintf(&b, "  (%s summed cache-probe spans across %d %s; spans may overlap)\n",
-			Dur(probe.WallNs), probe.Count, actionWord(probe.Count))
+		if probe.Count > 0 {
+			fmt.Fprintf(&b, "  (%s summed cache-probe spans across %d %s; spans may overlap)\n",
+				Dur(probe.WallNs), probe.Count, actionWord(probe.Count))
+		}
 		return b.String()
 	}
 
-	writeKinds(&b, s)
+	writeKinds(&b, s, acts)
 	writeCriticalPath(&b, acts, s, opt)
 	writeParallelism(&b, s, opt)
 	writeBiggest(&b, acts, opt)
@@ -68,7 +70,7 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 	return b.String()
 }
 
-func writeKinds(b *strings.Builder, s model.Summary) {
+func writeKinds(b *strings.Builder, s model.Summary, acts []model.Action) {
 	b.WriteString("\n  time went to\n")
 	kinds := []model.Kind{model.KindCompile, model.KindLink, model.KindVet, model.KindTest, model.KindCacheProbe}
 	for _, k := range kinds {
@@ -100,8 +102,19 @@ func writeKinds(b *strings.Builder, s model.Summary) {
 		if amount == 0 {
 			continue
 		}
-		fmt.Fprintf(b, "    %-9s %7s  %4s   %d %s\n",
-			k.String(), Dur(amount), Pct(amount, s.WorkNs), st.Count, actionWord(st.Count))
+		count := st.Count
+		label := actionWord(count)
+		if k == model.KindCompile || k == model.KindLink {
+			ran := 0
+			for _, a := range acts {
+				if a.Kind == k && a.Ran {
+					ran++
+				}
+			}
+			label = fmt.Sprintf("%d of %d %s", ran, count, actionWord(count))
+		}
+		fmt.Fprintf(b, "    %-9s %7s  %4s   %s\n",
+			k.String(), Dur(amount), Pct(amount, s.WorkNs), label)
 	}
 }
 
@@ -122,7 +135,7 @@ func writeCriticalPath(b *strings.Builder, acts []model.Action, s model.Summary,
 	// showing it under a cost heading would imply it did work.
 	shown := make([]model.Action, 0, len(path))
 	for _, a := range path {
-		if a.Ran && a.WorkNs > 0 {
+		if a.WorkNs > 0 && (a.Ran || a.Kind == model.KindVet) {
 			shown = append(shown, a)
 		}
 	}

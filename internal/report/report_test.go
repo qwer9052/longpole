@@ -79,6 +79,16 @@ func TestReportFullyCachedSaysNothingToOptimize(t *testing.T) {
 	golden(t, "fully_cached.txt", out)
 }
 
+func TestReportFullyCachedOmitsEmptyProbeSummary(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Kind: model.KindCompile, Cached: true},
+	}
+	out := Run(model.Summarize(acts, 100_000_000), acts, Options{})
+	if strings.Contains(out, "cache-probe spans") {
+		t.Fatalf("empty probe groups should not render a probe summary: %s", out)
+	}
+}
+
 func TestReportWarmNeverRanksCacheProbes(t *testing.T) {
 	// The incumbent's bug: on a warm build it lists cache probes as the
 	// slowest steps. The warm fixture still performs one real link, but its
@@ -103,6 +113,28 @@ func TestReportCriticalPathOmitsCachedActions(t *testing.T) {
 	out := Run(model.Summarize(acts, 200_000_000), acts, Options{TopN: 2, PathN: 2, Cores: 8})
 	if strings.Contains(out, "cached-wrapper") {
 		t.Errorf("cached actions must not appear under a cost heading; got:\n%s", out)
+	}
+}
+
+func TestReportCriticalPathShowsVetWork(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Kind: model.KindVet, Mode: "vet", Package: "pkg", WorkNs: 50_000_000, Deps: []int{1}},
+		{ID: 1, Kind: model.KindCompile, Mode: "build", Package: "dep", Cached: true},
+	}
+	out := Run(model.Summarize(acts, 100_000_000), acts, Options{PathN: 2})
+	if !strings.Contains(out, "pkg") {
+		t.Fatalf("vet work on the critical path should be listed: %s", out)
+	}
+}
+
+func TestReportLabelsRanActionsWithinKindTotals(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Kind: model.KindCompile, Mode: "build", Package: "ran", Ran: true, WorkNs: 10},
+		{ID: 1, Kind: model.KindCompile, Mode: "build", Package: "cached", Cached: true},
+	}
+	out := Run(model.Summarize(acts, 100), acts, Options{TopN: 1, PathN: 1})
+	if !strings.Contains(out, "1 of 2 actions") {
+		t.Fatalf("kind totals should distinguish ran actions: %s", out)
 	}
 }
 
