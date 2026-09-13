@@ -33,6 +33,25 @@ func TestInjectIntoGoTest(t *testing.T) {
 	}
 }
 
+func TestLeadingChangeDirectoryFlagKeepsSubcommandHandling(t *testing.T) {
+	argv := []string{"go", "-C", "internal/model", "build", "-debug-actiongraph=mine.json", "."}
+	if sub, err := Check(argv); err != nil || sub != "build" {
+		t.Fatalf("Check = %q, %v; want build, nil", sub, err)
+	}
+	if path, ok := ExistingGraphPath(argv); !ok || path != "mine.json" {
+		t.Fatalf("ExistingGraphPath = %q, %t; want mine.json, true", path, ok)
+	}
+
+	got, path := Inject([]string{"go", "-C=internal/model", "build", "."}, "/tmp/ag.json")
+	want := []string{"go", "-C=internal/model", "build", "-debug-actiongraph=/tmp/ag.json", "."}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("Inject = %v, want %v", got, want)
+	}
+	if path != "/tmp/ag.json" {
+		t.Errorf("path = %q, want injected path", path)
+	}
+}
+
 // If the user already asked for a graph, use theirs rather than fighting over
 // the flag. The go command would reject two of them anyway.
 func TestRespectsExistingFlag(t *testing.T) {

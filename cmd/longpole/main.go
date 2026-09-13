@@ -260,7 +260,7 @@ func persist(ctx context.Context, argv []string, res wrap.Result, s model.Summar
 		}
 	}()
 
-	scope := wrap.CurrentScope(ctx)
+	scope := wrap.CurrentScope(ctx, argv)
 	return saveRun(db, store.Run{
 		Scope:     scope,
 		StartedAt: time.Now().UnixNano(),
@@ -364,7 +364,7 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 	var beforeID, afterID int64
 	switch len(args) {
 	case 0:
-		runs, err := db.Recent(scope, 2)
+		runs, err := db.Recent(scope, keepRuns)
 		if err != nil {
 			fmt.Fprintf(stderr, "longpole: %v\n", err)
 			return 1
@@ -374,7 +374,18 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 				"longpole: need two runs to compare, have %d — run a build again\n", len(runs))
 			return 1
 		}
-		afterID, beforeID = runs[0].ID, runs[1].ID
+		afterID = runs[0].ID
+		for _, run := range runs[1:] {
+			if run.Command == runs[0].Command {
+				beforeID = run.ID
+				break
+			}
+		}
+		if beforeID == 0 {
+			fmt.Fprintf(stderr,
+				"longpole: need two runs of %q to compare — run that command again\n", runs[0].Command)
+			return 1
+		}
 	case 2:
 		beforeID, err = strconv.ParseInt(args[0], 10, 64)
 		if err != nil {
@@ -408,6 +419,9 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 	if afterRun.Scope != scope {
 		fmt.Fprintf(stderr, "longpole: run #%d belongs to a different scope\n", afterRun.ID)
 		return 1
+	}
+	if beforeRun.Command != afterRun.Command {
+		fmt.Fprintf(stdout, "\n  note: comparing different commands: %q -> %q\n", beforeRun.Command, afterRun.Command)
 	}
 
 	fmt.Fprint(stdout, report.Diff(report.DiffInput{

@@ -2,6 +2,9 @@ package wrap
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,7 +54,7 @@ func TestModulePathIgnoresListingGOFLAGS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GOFLAGS", tt.goFlags)
 			t.Setenv("GOPROXY", "off")
-			if got := modulePath(context.Background()); got != "github.com/qwer9052/longpole" {
+			if got := modulePath(context.Background(), ""); got != "github.com/qwer9052/longpole" {
 				t.Errorf("module path = %q", got)
 			}
 		})
@@ -62,7 +65,23 @@ func TestModulePathHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if got := modulePath(ctx); got != "" {
+	if got := modulePath(ctx, ""); got != "" {
 		t.Errorf("module path = %q, want empty after cancellation", got)
+	}
+}
+
+func TestCurrentScopeUsesLeadingChangeDirectoryFlag(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/changed-dir\n\ngo 1.25\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CurrentScope(context.Background(), []string{"go", "-C", dir, "build", "."})
+	want := Scope("example.com/changed-dir", dir)
+	if got != want {
+		t.Errorf("CurrentScope = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "@unknown") {
+		t.Errorf("scope did not resolve the -C directory: %q", got)
 	}
 }

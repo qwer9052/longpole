@@ -18,7 +18,9 @@ type DiffInput struct {
 
 // change is one action that behaved differently between the two runs.
 type change struct {
+	GraphID        int
 	Package        string
+	Deps           []int
 	WorkNs         int64
 	WasCached      bool
 	OldAction      string
@@ -177,7 +179,7 @@ func findChanges(before, after []model.Action) []change {
 			continue
 		}
 
-		c := change{Package: pkgName(a), WorkNs: a.WorkNs, NewAction: a.ActionID}
+		c := change{GraphID: a.ID, Package: pkgName(a), Deps: a.Deps, WorkNs: a.WorkNs, NewAction: a.ActionID}
 		if matched {
 			old := previous[beforeIndex]
 			c.WasCached = old.Cached
@@ -219,15 +221,33 @@ func previousStatus(c change) string {
 	return "did not run last time"
 }
 
-// writeIdentityNote explains the mechanism behind the rebuilds. Without this
-// the reader is told what happened but not why it could have happened.
+// writeIdentityNote names only a candidate root: an action whose identity
+// changed without a changed direct dependency. The graph alone cannot identify
+// which hash input changed, so it must not promise that --explain can do so.
 func writeIdentityNote(b *strings.Builder, changes []change) {
+	changed := make(map[int]bool, len(changes))
 	for _, c := range changes {
 		if c.OldAction != "" && c.NewAction != "" && c.OldAction != c.NewAction {
-			fmt.Fprintf(b, "\n  identity changed  %s\n", c.Package)
-			fmt.Fprintf(b, "    %s -> %s\n", c.OldAction, c.NewAction)
-			b.WriteString("    run with --explain to see which input changed\n")
-			return
+			changed[c.GraphID] = true
 		}
+	}
+	for _, c := range changes {
+		if c.OldAction == "" || c.NewAction == "" || c.OldAction == c.NewAction {
+			continue
+		}
+		hasChangedDependency := false
+		for _, dependency := range c.Deps {
+			if changed[dependency] {
+				hasChangedDependency = true
+				break
+			}
+		}
+		if hasChangedDependency {
+			continue
+		}
+		fmt.Fprintf(b, "\n  candidate root  %s\n", c.Package)
+		fmt.Fprintf(b, "    %s -> %s\n", c.OldAction, c.NewAction)
+		b.WriteString("    action identity changed with no changed direct dependency\n")
+		return
 	}
 }

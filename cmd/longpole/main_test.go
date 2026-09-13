@@ -332,6 +332,65 @@ func TestRunDiffComparesTwoMostRecentScopedRuns(t *testing.T) {
 	}
 }
 
+func TestRunDiffDefaultsToPreviousRunOfSameCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeID, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Save(store.Run{Scope: "target", Command: "go test ./..."}, nil); err != nil {
+		t.Fatal(err)
+	}
+	afterID, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if got := runDiffFrom(path, "target", nil, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", got, stderr.String())
+	}
+	want := "run " + strconv.FormatInt(beforeID, 10) + " -> run " + strconv.FormatInt(afterID, 10)
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("diff = %q, want matching-command runs %q", stdout.String(), want)
+	}
+}
+
+func TestRunDiffNotesDifferentCommandsForExplicitIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeID, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterID, err := db.Save(store.Run{Scope: "target", Command: "go test ./..."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	args := []string{strconv.FormatInt(beforeID, 10), strconv.FormatInt(afterID, 10)}
+	if got := runDiffFrom(path, "target", args, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", got, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "note: comparing different commands") {
+		t.Errorf("diff = %q, want different-command note", stdout.String())
+	}
+}
+
 func TestRunDiffNeedsTwoRunsInScope(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runs.db")
 	db, err := store.Open(path)
