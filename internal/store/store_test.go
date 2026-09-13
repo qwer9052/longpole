@@ -412,8 +412,8 @@ func TestSQLiteFileDSNEscapesQuestionMark(t *testing.T) {
 	if u.Query().Get("_foreign_keys") != "on" {
 		t.Errorf("foreign key parameter = %q, want on", u.Query().Get("_foreign_keys"))
 	}
-	if got := u.Query()["_pragma"]; !reflect.DeepEqual(got, []string{"busy_timeout(5000)"}) {
-		t.Errorf("pragma parameters = %#v, want busy_timeout(5000)", got)
+	if got := u.Query()["_pragma"]; !reflect.DeepEqual(got, []string{"busy_timeout(30000)"}) {
+		t.Errorf("pragma parameters = %#v, want busy_timeout(30000)", got)
 	}
 }
 
@@ -423,8 +423,8 @@ func TestOpenSetsBusyTimeout(t *testing.T) {
 	if err := s.db.QueryRow(`PRAGMA busy_timeout`).Scan(&got); err != nil {
 		t.Fatalf("read busy timeout: %v", err)
 	}
-	if got != 5000 {
-		t.Errorf("busy_timeout = %d, want 5000", got)
+	if got != 30000 {
+		t.Errorf("busy_timeout = %d, want 30000", got)
 	}
 }
 

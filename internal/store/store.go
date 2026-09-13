@@ -126,7 +126,7 @@ func sqliteFileDSN(path string) (string, error) {
 	// so database/sql cannot open a replacement connection without it.
 	query.Set("_foreign_keys", "on")
 	query.Set("_journal_mode", "wal")
-	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "busy_timeout(30000)")
 	u.RawQuery = query.Encode()
 	return u.String(), nil
 }
