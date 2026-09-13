@@ -119,6 +119,26 @@ func TestRootsGroupsHashLinkedCandidates(t *testing.T) {
 	}
 }
 
+func TestRootsGroupsCompileAndLinkCandidatesFromPackagefile(t *testing.T) {
+	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
+	const configDigest = "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"
+	appID := actionID(t, appDigest)
+	configID := actionID(t, configDigest)
+	acts := []model.Action{
+		{Package: "app", Kind: model.KindLink, Ran: true, ActionID: appID, BuildID: appID + "/app-output", Deps: []int{1}},
+		{Package: "config", Kind: model.KindCompile, Ran: true, ActionID: configID, BuildID: configID + "/config-output"},
+	}
+	blocks := map[string]hashlog.Block{
+		"link app":     {Name: "link app", Inputs: []string{"packagefile config=config-output"}, Digest: appDigest},
+		"build config": {Name: "build config", Digest: configDigest},
+	}
+
+	roots := Roots(acts, blocks)
+	if len(roots) != 1 || roots[0].Package != "config" || roots[0].Downstream != 1 {
+		t.Errorf("packagefile evidence must join compile and link candidates: %+v", roots)
+	}
+}
+
 func TestRootsRequireDependentBlockIdentity(t *testing.T) {
 	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
 	const configDigest = "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"

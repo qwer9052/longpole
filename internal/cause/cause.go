@@ -108,9 +108,10 @@ type Root struct {
 // Roots returns a conservative candidate rebuild frontier for one action
 // graph. An action-graph dependency alone does not join candidates: independent
 // rebuilds can have the same edge. Candidates are joined only when the
-// dependent's current import input matches the dependency's current output
-// content ID and both hash blocks identify their actions. This is evidence of
-// an observed relationship, not proof that either action's input changed.
+// dependent's current import or packagefile input matches the dependency's
+// current output content ID and both hash blocks identify their actions. This
+// is evidence of an observed relationship, not proof that either action's
+// input changed.
 func Roots(actions []model.Action, blocks map[string]hashlog.Block) []Root {
 	ran := make([]bool, len(actions))
 	for i, action := range actions {
@@ -153,13 +154,13 @@ func candidateDependents(actions []model.Action, ran []bool, blocks map[string]h
 		if !ok || !blockMatchesAction(block, action) {
 			continue
 		}
-		imports := importedOutputs(block)
+		references := referencedOutputs(block)
 		for _, dependency := range action.Deps {
 			if dependency < 0 || dependency >= len(actions) || !ran[dependency] {
 				continue
 			}
 			output, ok := actionOutput(actions[dependency], blocks)
-			if !ok || !imports[actions[dependency].Package][output] {
+			if !ok || !references[actions[dependency].Package][output] {
 				continue
 			}
 			dependents[dependency] = append(dependents[dependency], dependent)
@@ -177,17 +178,27 @@ func blockForAction(blocks map[string]hashlog.Block, action model.Action) (hashl
 	return hashlog.Block{}, false
 }
 
-func importedOutputs(block hashlog.Block) map[string]map[string]bool {
+func referencedOutputs(block hashlog.Block) map[string]map[string]bool {
 	outputs := make(map[string]map[string]bool)
 	for _, input := range block.Inputs {
 		fields := strings.Fields(trimLine(input))
-		if len(fields) != 3 || fields[0] != "import" {
+		var pkg, output string
+		switch {
+		case len(fields) == 3 && fields[0] == "import":
+			pkg, output = fields[1], fields[2]
+		case len(fields) == 2 && fields[0] == "packagefile":
+			var ok bool
+			pkg, output, ok = strings.Cut(fields[1], "=")
+			if !ok || pkg == "" || output == "" {
+				continue
+			}
+		default:
 			continue
 		}
-		if outputs[fields[1]] == nil {
-			outputs[fields[1]] = make(map[string]bool)
+		if outputs[pkg] == nil {
+			outputs[pkg] = make(map[string]bool)
 		}
-		outputs[fields[1]][fields[2]] = true
+		outputs[pkg][output] = true
 	}
 	return outputs
 }
