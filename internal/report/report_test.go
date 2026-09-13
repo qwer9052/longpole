@@ -117,6 +117,41 @@ func TestReportLabelsCacheProbeTimeAsAggregateOverlappingSpans(t *testing.T) {
 	}
 }
 
+// A regression would hide test-binary execution again, making a cached go test
+// appear to account for almost none of its own wall time.
+func TestReportShowsTestExecutionAndLabelsTotalWallDenominators(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "package", Ran: true, WorkNs: 100_000_000},
+		{ID: 1, Mode: "test run", Kind: model.KindTest, Package: "package", WallNs: 4_000_000_000},
+	}
+	out := Run(model.Summarize(acts, 5_000_000_000), acts, Options{TopN: 1, PathN: 1, Cores: 8})
+	if !strings.Contains(out, "test execution; may overlap") || !strings.Contains(out, "4.00s") {
+		t.Errorf("test execution must be shown separately; got:\n%s", out)
+	}
+	if !strings.Contains(out, "build critical path") || !strings.Contains(out, "includes test execution") {
+		t.Errorf("build-only metrics must label total-wall denominators; got:\n%s", out)
+	}
+}
+
+func TestReportDoesNotCallTestExecutionFullyCached(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "package", Cached: true},
+		{ID: 1, Mode: "test run", Kind: model.KindTest, Package: "package", WallNs: 4_000_000_000},
+	}
+	out := Run(model.Summarize(acts, 5_000_000_000), acts, Options{TopN: 1, PathN: 1, Cores: 8})
+	if strings.Contains(out, "nothing to optimize") {
+		t.Errorf("test execution is not a fully cached command; got:\n%s", out)
+	}
+}
+
+func TestReportGotestFixtureShowsTestRunTime(t *testing.T) {
+	acts := fixture(t, "gotest.json")
+	out := Run(model.Summarize(acts, 1_000_000_000), acts, Options{TopN: 1, PathN: 1, Cores: 8})
+	if !strings.Contains(out, "test execution; may overlap") {
+		t.Errorf("the real go test fixture must show its test-run span; got:\n%s", out)
+	}
+}
+
 func TestReportUsesSingularAction(t *testing.T) {
 	acts := []model.Action{{ID: 0, Mode: "build", Kind: model.KindCompile, Package: "one", Ran: true, WorkNs: 100_000_000, QueueNs: 60_000_000}}
 	out := Run(model.Summarize(acts, 200_000_000), acts, Options{TopN: 1, PathN: 1, Cores: 8})

@@ -70,7 +70,7 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 
 func writeKinds(b *strings.Builder, s model.Summary) {
 	b.WriteString("\n  time went to\n")
-	kinds := []model.Kind{model.KindCompile, model.KindLink, model.KindVet, model.KindCacheProbe}
+	kinds := []model.Kind{model.KindCompile, model.KindLink, model.KindVet, model.KindTest, model.KindCacheProbe}
 	for _, k := range kinds {
 		st, ok := s.ByKind[k]
 		if !ok || st.Count == 0 {
@@ -83,6 +83,16 @@ func writeKinds(b *strings.Builder, s model.Summary) {
 			// Probe spans can overlap, so their sum is neither elapsed time nor a
 			// share of the independent subprocess-work total.
 			fmt.Fprintf(b, "    %-9s %7s  span sum   %d %s (may overlap)\n",
+				k.String(), Dur(st.WallNs), st.Count, actionWord(st.Count))
+			continue
+		}
+		if k == model.KindTest {
+			if st.WallNs == 0 {
+				continue
+			}
+			// The action graph omits CmdReal for test runs. Their wall spans are
+			// still the only honest measurement of time spent in test binaries.
+			fmt.Fprintf(b, "    %-9s %7s  span sum   %d %s (test execution; may overlap)\n",
 				k.String(), Dur(st.WallNs), st.Count, actionWord(st.Count))
 			continue
 		}
@@ -100,8 +110,13 @@ func writeCriticalPath(b *strings.Builder, acts []model.Action, s model.Summary,
 	if total == 0 {
 		return
 	}
-	fmt.Fprintf(b, "\n  critical path  %s of %s wall (%s)\n",
-		Dur(total), Dur(s.WallNs), Pct(total, s.WallNs))
+	if s.ByKind[model.KindTest].WallNs > 0 {
+		fmt.Fprintf(b, "\n  build critical path  %s of %s total wall (%s; includes test execution)\n",
+			Dur(total), Dur(s.WallNs), Pct(total, s.WallNs))
+	} else {
+		fmt.Fprintf(b, "\n  critical path  %s of %s wall (%s)\n",
+			Dur(total), Dur(s.WallNs), Pct(total, s.WallNs))
+	}
 
 	// A zero-cost cached wrapper can still be part of the dependency chain, but
 	// showing it under a cost heading would imply it did work.
@@ -129,8 +144,13 @@ func writeParallelism(b *strings.Builder, s model.Summary, opt Options) {
 	if s.Parallelism == 0 {
 		return
 	}
-	fmt.Fprintf(b, "\n  parallelism  %.1fx of %d cores  (work %s / wall %s)\n",
-		s.Parallelism, opt.Cores, Dur(s.WorkNs), Dur(s.WallNs))
+	if s.ByKind[model.KindTest].WallNs > 0 {
+		fmt.Fprintf(b, "\n  build parallelism  %.1fx of %d cores  (build work %s / total wall %s; includes test execution)\n",
+			s.Parallelism, opt.Cores, Dur(s.WorkNs), Dur(s.WallNs))
+	} else {
+		fmt.Fprintf(b, "\n  parallelism  %.1fx of %d cores  (work %s / wall %s)\n",
+			s.Parallelism, opt.Cores, Dur(s.WorkNs), Dur(s.WallNs))
+	}
 	if s.QueueHeavy > 0 {
 		fmt.Fprintf(b, "    ! %s summed queue wait; %d %s waited over 50ms\n",
 			Dur(s.QueueNs), s.QueueHeavy, actionWord(s.QueueHeavy))
@@ -142,12 +162,22 @@ func writeBiggest(b *strings.Builder, acts []model.Action, opt Options) {
 	if len(top) == 0 {
 		return
 	}
-	radius := critpath.BlastRadius(acts)
+	positions := make(map[int]int, len(acts))
+	for i, a := range acts {
+		positions[a.ID] = i
+	}
+	indexes := make([]int, 0, len(top))
+	for _, a := range top {
+		if i, ok := positions[a.ID]; ok {
+			indexes = append(indexes, i)
+		}
+	}
+	radius := critpath.BlastRadiusFor(acts, indexes)
 	b.WriteString("\n  slowest packages\n")
 	for _, a := range top {
 		blocks := ""
-		if a.ID >= 0 && a.ID < len(radius) && radius[a.ID] > 0 {
-			blocks = fmt.Sprintf(", blocks %d", radius[a.ID])
+		if i, ok := positions[a.ID]; ok && radius[i] > 0 {
+			blocks = fmt.Sprintf(", blocks %d", radius[i])
 		}
 		fmt.Fprintf(b, "    %7s  %s%s\n", Dur(a.WorkNs), pkgName(a), blocks)
 	}

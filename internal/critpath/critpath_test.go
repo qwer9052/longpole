@@ -125,6 +125,20 @@ func TestBlastRadiusExcludesActionItselfInCycle(t *testing.T) {
 	}
 }
 
+func TestBlastRadiusForOnlyReturnsRequestedActions(t *testing.T) {
+	// 3 and 2 both feed 0; 1 feeds nothing.
+	acts := []model.Action{
+		{ID: 0, Package: "top", Deps: []int{2}},
+		{ID: 1, Package: "orphan"},
+		{ID: 2, Package: "mid", Deps: []int{3}},
+		{ID: 3, Package: "base"},
+	}
+	r := BlastRadiusFor(acts, []int{3, 1})
+	if len(r) != 2 || r[3] != 2 || r[1] != 0 {
+		t.Errorf("selected blast radius = %v, want map[1:0 3:2]", r)
+	}
+}
+
 func BenchmarkBlastRadiusRealGraph(b *testing.B) {
 	acts := make([]model.Action, 400)
 	for i := range acts {
@@ -141,6 +155,28 @@ func BenchmarkBlastRadiusRealGraph(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		BlastRadius(acts)
 	}
+}
+
+// This size approximates a 10,000-package graph after Go 1.26 added separate
+// cache-check actions. The report asks only for TopN radii, not every action.
+func BenchmarkBlastRadiusForTopN(b *testing.B) {
+	acts := benchmarkGraph(20_000)
+	indexes := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BlastRadiusFor(acts, indexes)
+	}
+}
+
+func benchmarkGraph(n int) []model.Action {
+	acts := make([]model.Action, n)
+	for i := range acts {
+		acts[i].ID = i
+		for gap := 1; gap <= 8 && gap <= i; gap++ {
+			acts[i].Deps = append(acts[i].Deps, i-gap)
+		}
+	}
+	return acts
 }
 
 func timeoutAfterOneSecond() <-chan time.Time {

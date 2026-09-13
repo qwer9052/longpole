@@ -137,6 +137,7 @@ func TestKindClassification(t *testing.T) {
 		"link-install":      KindLink,
 		"build check cache": KindCacheProbe,
 		"vet":               KindVet,
+		"test run":          KindTest,
 		"nop":               KindOther,
 		"something new":     KindOther,
 	}

@@ -85,6 +85,25 @@ func BlastRadius(acts []model.Action) []int {
 	if n == 0 {
 		return out
 	}
+	indexes := make([]int, n)
+	for i := range indexes {
+		indexes[i] = i
+	}
+	for i, radius := range BlastRadiusFor(acts, indexes) {
+		out[i] = radius
+	}
+	return out
+}
+
+// BlastRadiusFor returns the transitive dependent count for only the requested
+// action indexes. Report rendering needs this narrow form for its TopN list,
+// while BlastRadius retains the complete result for callers that need it.
+func BlastRadiusFor(acts []model.Action, indexes []int) map[int]int {
+	n := len(acts)
+	out := make(map[int]int, len(indexes))
+	if n == 0 {
+		return out
+	}
 
 	// Reverse the edges: dependents[d] lists everything that depends on d.
 	dependents := make([][]int, n)
@@ -96,7 +115,11 @@ func BlastRadius(acts []model.Action) []int {
 		}
 	}
 
-	for i := range acts {
+	for _, i := range indexes {
+		if i < 0 || i >= n {
+			continue
+		}
+		out[i] = 0
 		seen := make([]bool, n)
 		seen[i] = true
 		stack := []int{i}
