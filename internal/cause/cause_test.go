@@ -171,13 +171,15 @@ func TestRootsRequireDependentBlockIdentity(t *testing.T) {
 }
 
 func TestRootsKeepIndependentActionsAsSeparateCandidates(t *testing.T) {
+	const appDigest = "0011223344556677889900112233445566778899001122334455667788990011"
 	configID := actionID(t, "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803")
+	appID := actionID(t, appDigest)
 	acts := []model.Action{
-		{Package: "app", Kind: model.KindCompile, Ran: true, Deps: []int{1}},
+		{Package: "app", Kind: model.KindCompile, Ran: true, ActionID: appID, BuildID: appID + "/app-output", Deps: []int{1}},
 		{Package: "config", Kind: model.KindCompile, Ran: true, ActionID: configID, BuildID: configID + "/config-output"},
 	}
 	blocks := map[string]hashlog.Block{
-		"build app":    block("build app", "import config different-output"),
+		"build app":    {Name: "build app", Inputs: []string{"import config different-output"}, Digest: appDigest},
 		"build config": {Name: "build config", Digest: "2c9680efc7e3447cab20e45e155b992b21218bd63e30939919b458a857ae4803"},
 	}
 
