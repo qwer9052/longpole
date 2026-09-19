@@ -110,6 +110,8 @@ func TestModulePathFromFileAcceptsGoModuleSyntax(t *testing.T) {
 	}{
 		{"trailing comment", "module example.com/child // comment\n", "example.com/child"},
 		{"quoted path", "module \"example.com/child\"\n", "example.com/child"},
+		{"raw quoted path", "module `example.com/child`\n", "example.com/child"},
+		{"adjacent comment", "module example.com/child// comment\n", "example.com/child"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(child, "go.mod"), []byte(tt.line), 0o600); err != nil {

@@ -120,13 +120,16 @@ func modulePathFromFile(dir string) (string, bool) {
 		data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
+				if i := strings.Index(line, "//"); i >= 0 {
+					line = line[:i]
+				}
 				fields := strings.Fields(line)
 				if len(fields) >= 2 && fields[0] == "module" {
-					if len(fields) > 2 && fields[2] != "//" {
+					if len(fields) != 2 {
 						return "", true
 					}
 					path := fields[1]
-					if strings.HasPrefix(path, "\"") {
+					if strings.HasPrefix(path, "\"") || strings.HasPrefix(path, "`") {
 						unquoted, err := strconv.Unquote(path)
 						if err != nil {
 							return "", true
