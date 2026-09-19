@@ -116,6 +116,34 @@ func TestReportCriticalPathOmitsCachedActions(t *testing.T) {
 	}
 }
 
+func TestReportSkipsSplitHintForShortCriticalPath(t *testing.T) {
+	acts := []model.Action{{ID: 0, Kind: model.KindCompile, Package: "short", Ran: true, WorkNs: 200_000_000}}
+	out := Run(model.Summarize(acts, 2_000_000_000), acts, Options{})
+	if strings.Contains(out, "consider splitting") {
+		t.Fatalf("short work should not trigger a split hint: %s", out)
+	}
+}
+
+func TestReportSuggestsReducingRelinks(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Kind: model.KindLink, Package: "one", Ran: true, WorkNs: 2_000_000_000},
+		{ID: 1, Kind: model.KindLink, Package: "two", Ran: true, WorkNs: 2_000_000_000},
+	}
+	out := Run(model.Summarize(acts, 5_000_000_000), acts, Options{})
+	if !strings.Contains(out, "2 binaries were re-linked") {
+		t.Fatalf("multiple relinks should be called out: %s", out)
+	}
+}
+
+func TestReportLabelsActionGraphOutsideTimeAsEstimate(t *testing.T) {
+	s := model.Summarize([]model.Action{{ID: 0, Kind: model.KindCompile, Ran: true, WorkNs: 100_000_000}}, 2_000_000_000)
+	s.ActionSpanNs = 1_000_000_000
+	out := Run(s, nil, Options{})
+	if !strings.Contains(out, "outside the action graph") || strings.Contains(out, "before actions") {
+		t.Fatalf("outside-action time wording should not imply only startup: %s", out)
+	}
+}
+
 func TestReportCriticalPathShowsVetWork(t *testing.T) {
 	acts := []model.Action{
 		{ID: 0, Kind: model.KindVet, Mode: "vet", Package: "pkg", WorkNs: 50_000_000, Deps: []int{1}},

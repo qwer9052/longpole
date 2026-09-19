@@ -49,10 +49,20 @@ func TestEmptyGraphIsNotFullyCached(t *testing.T) {
 func TestSummarizeQueueIgnoresCacheProbes(t *testing.T) {
 	s := Summarize([]Action{
 		{Kind: KindCacheProbe, QueueNs: 2_000_000_000},
-		{Kind: KindCompile, QueueNs: 60_000_000},
+		{Kind: KindCompile, Ran: true, QueueNs: 60_000_000},
 	}, 1_000_000_000)
 	if s.QueueNs != 60_000_000 || s.QueueHeavy != 1 {
 		t.Fatalf("queue totals should include only work actions: %+v", s)
+	}
+}
+
+func TestSummarizeQueueIgnoresCachedWork(t *testing.T) {
+	s := Summarize([]Action{
+		{Kind: KindCompile, Cached: true, QueueNs: 2_000_000_000},
+		{Kind: KindCompile, Ran: true, QueueNs: 60_000_000},
+	}, 1_000_000_000)
+	if s.QueueNs != 60_000_000 || s.QueueHeavy != 1 {
+		t.Fatalf("queue totals should include only ran work: %+v", s)
 	}
 }
 

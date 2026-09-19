@@ -56,10 +56,10 @@ func Summarize(acts []Action, wallNs int64) Summary {
 			s.Cached++
 		}
 		s.WorkNs += a.WorkNs
-		if a.Kind == KindCompile || a.Kind == KindLink {
+		if a.Ran && (a.Kind == KindCompile || a.Kind == KindLink) {
 			s.QueueNs += a.QueueNs
 		}
-		if (a.Kind == KindCompile || a.Kind == KindLink) && a.QueueNs > queueHeavyThresholdNs {
+		if a.Ran && (a.Kind == KindCompile || a.Kind == KindLink) && a.QueueNs > queueHeavyThresholdNs {
 			s.QueueHeavy++
 		}
 

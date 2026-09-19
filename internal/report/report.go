@@ -75,21 +75,29 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 
 func writeSuggestions(b *strings.Builder, acts []model.Action, s model.Summary) {
 	path, total := critpath.Find(acts)
-	if total <= 0 || len(path) == 0 {
-		return
-	}
 	var top model.Action
 	for _, a := range path {
 		if a.WorkNs > top.WorkNs {
 			top = a
 		}
 	}
-	if top.Package == "" || top.WorkNs*2 < total {
-		return
+	if total > 0 && top.Kind == model.KindCompile && top.Package != "" &&
+		top.WorkNs >= 1_000_000_000 && top.WorkNs*2 >= total && top.WorkNs*5 >= s.WallNs {
+		fmt.Fprintf(b, "\n  worth a look\n    %s is %s of the critical path; consider splitting this build step\n",
+			pkgName(top), Pct(top.WorkNs, total))
 	}
-	fmt.Fprintf(b, "\n  worth a look\n    %s is %s of the critical path; consider splitting this build step",
-		pkgName(top), Pct(top.WorkNs, total))
-	b.WriteByte('\n')
+
+	links, linkWork := 0, int64(0)
+	for _, a := range acts {
+		if a.Kind == model.KindLink && a.Ran && a.WorkNs > 0 {
+			links++
+			linkWork += a.WorkNs
+		}
+	}
+	if links >= 2 && linkWork >= 1_000_000_000 {
+		fmt.Fprintf(b, "\n  worth a look\n    %d binaries were re-linked (%s); build only the binaries you need when possible\n",
+			links, Dur(linkWork))
+	}
 }
 
 func writeKinds(b *strings.Builder, s model.Summary, acts []model.Action) {
@@ -199,7 +207,7 @@ func writeLoading(b *strings.Builder, s model.Summary) {
 	if s.WallNs <= 0 || s.ActionSpanNs <= 0 || s.ActionSpanNs >= s.WallNs {
 		return
 	}
-	fmt.Fprintf(b, "\n  go command loading ≈%s before actions (estimated; not in the action graph)\n",
+	fmt.Fprintf(b, "\n  go command ≈%s outside the action graph (loading, startup and exit; estimated)\n",
 		Dur(s.WallNs-s.ActionSpanNs))
 }
 
