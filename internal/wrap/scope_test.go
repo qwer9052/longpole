@@ -93,3 +93,49 @@ func TestCurrentScopeUsesLeadingChangeDirectoryFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestModulePathFromFileAcceptsGoModuleSyntax(t *testing.T) {
+	parent := t.TempDir()
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "go.mod"), []byte("module example.com/parent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{"trailing comment", "module example.com/child // comment\n", "example.com/child"},
+		{"quoted path", "module \"example.com/child\"\n", "example.com/child"},
+		{"raw quoted path", "module `example.com/child`\n", "example.com/child"},
+		{"adjacent comment", "module example.com/child// comment\n", "example.com/child"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(child, "go.mod"), []byte(tt.line), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, found := modulePathFromFile(child)
+			if !found || got != tt.want {
+				t.Fatalf("modulePathFromFile() = %q, %v; want %q, true", got, found, tt.want)
+			}
+		})
+	}
+}
+
+func TestModulePathFromFileRejectsInvalidDirective(t *testing.T) {
+	dir := t.TempDir()
+	for _, line := range []string{
+		"module \"example.com/unterminated\n",
+		"module example.com/child unexpected\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, found := modulePathFromFile(dir); !found || got != "" {
+			t.Fatalf("modulePathFromFile(%q) = %q, %v; want empty invalid result", line, got, found)
+		}
+	}
+}
