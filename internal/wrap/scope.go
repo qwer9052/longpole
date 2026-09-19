@@ -122,8 +122,15 @@ func modulePathFromFile(dir string) (string, bool) {
 			for _, line := range strings.Split(string(data), "\n") {
 				fields := strings.Fields(line)
 				if len(fields) >= 2 && fields[0] == "module" {
+					if len(fields) > 2 && fields[2] != "//" {
+						return "", true
+					}
 					path := fields[1]
-					if unquoted, err := strconv.Unquote(path); err == nil {
+					if strings.HasPrefix(path, "\"") {
+						unquoted, err := strconv.Unquote(path)
+						if err != nil {
+							return "", true
+						}
 						path = unquoted
 					}
 					return path, true

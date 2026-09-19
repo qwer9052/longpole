@@ -122,3 +122,18 @@ func TestModulePathFromFileAcceptsGoModuleSyntax(t *testing.T) {
 		})
 	}
 }
+
+func TestModulePathFromFileRejectsInvalidDirective(t *testing.T) {
+	dir := t.TempDir()
+	for _, line := range []string{
+		"module \"example.com/unterminated\n",
+		"module example.com/child unexpected\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, found := modulePathFromFile(dir); !found || got != "" {
+			t.Fatalf("modulePathFromFile(%q) = %q, %v; want empty invalid result", line, got, found)
+		}
+	}
+}
