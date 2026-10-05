@@ -135,6 +135,32 @@ func TestReportSuggestsReducingRelinks(t *testing.T) {
 	}
 }
 
+func TestReportSkipsRelinkHintForTestBinaries(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Kind: model.KindLink, Package: "one.test", Ran: true, WorkNs: 2_000_000_000},
+		{ID: 1, Kind: model.KindLink, Package: "two.test", Ran: true, WorkNs: 2_000_000_000},
+	}
+	out := Run(model.Summarize(acts, 5_000_000_000), acts, Options{})
+	if strings.Contains(out, "re-linked") {
+		t.Fatalf("go test links one binary per package by design: %s", out)
+	}
+}
+
+func TestReportGroupsHintsUnderOneHeading(t *testing.T) {
+	acts := []model.Action{
+		{ID: 0, Kind: model.KindLink, Package: "one", Ran: true, WorkNs: 1_000_000_000, Deps: []int{2}},
+		{ID: 1, Kind: model.KindLink, Package: "two", Ran: true, WorkNs: 1_000_000_000, Deps: []int{2}},
+		{ID: 2, Kind: model.KindCompile, Package: "big", Ran: true, WorkNs: 8_000_000_000},
+	}
+	out := Run(model.Summarize(acts, 10_000_000_000), acts, Options{})
+	if !strings.Contains(out, "consider splitting") || !strings.Contains(out, "re-linked") {
+		t.Fatalf("both hints should fire: %s", out)
+	}
+	if n := strings.Count(out, "worth a look"); n != 1 {
+		t.Fatalf("hints should share one heading, got %d: %s", n, out)
+	}
+}
+
 func TestReportLabelsActionGraphOutsideTimeAsEstimate(t *testing.T) {
 	s := model.Summarize([]model.Action{{ID: 0, Kind: model.KindCompile, Ran: true, WorkNs: 100_000_000}}, 2_000_000_000)
 	s.ActionSpanNs = 1_000_000_000

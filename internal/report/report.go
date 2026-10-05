@@ -74,6 +74,8 @@ func Run(s model.Summary, acts []model.Action, opt Options) string {
 }
 
 func writeSuggestions(b *strings.Builder, acts []model.Action, s model.Summary) {
+	var hints []string
+
 	path, total := critpath.Find(acts)
 	var top model.Action
 	for _, a := range path {
@@ -83,20 +85,30 @@ func writeSuggestions(b *strings.Builder, acts []model.Action, s model.Summary) 
 	}
 	if total > 0 && top.Kind == model.KindCompile && top.Package != "" &&
 		top.WorkNs >= 1_000_000_000 && top.WorkNs*2 >= total && top.WorkNs*5 >= s.WallNs {
-		fmt.Fprintf(b, "\n  worth a look\n    %s is %s of the critical path; consider splitting this build step\n",
-			pkgName(top), Pct(top.WorkNs, total))
+		hints = append(hints, fmt.Sprintf("%s is %s of the critical path; consider splitting this build step",
+			pkgName(top), Pct(top.WorkNs, total)))
 	}
 
 	links, linkWork := 0, int64(0)
 	for _, a := range acts {
-		if a.Kind == model.KindLink && a.Ran && a.WorkNs > 0 {
+		// go test links one binary per package by design, so advising the user
+		// to build fewer binaries would be wrong for test links.
+		if a.Kind == model.KindLink && a.Ran && a.WorkNs > 0 && !strings.HasSuffix(a.Package, ".test") {
 			links++
 			linkWork += a.WorkNs
 		}
 	}
 	if links >= 2 && linkWork >= 1_000_000_000 {
-		fmt.Fprintf(b, "\n  worth a look\n    %d binaries were re-linked (%s); build only the binaries you need when possible\n",
-			links, Dur(linkWork))
+		hints = append(hints, fmt.Sprintf("%d binaries were re-linked (%s); build only the binaries you need when possible",
+			links, Dur(linkWork)))
+	}
+
+	if len(hints) == 0 {
+		return
+	}
+	b.WriteString("\n  worth a look\n")
+	for _, h := range hints {
+		fmt.Fprintf(b, "    %s\n", h)
 	}
 }
 
