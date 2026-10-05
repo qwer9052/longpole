@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/qwer9052/longpole/internal/actiongraph"
@@ -28,6 +29,7 @@ const usage = `longpole — why was my Go build slow?
   longpole --explain go build ./...  also explain rebuild candidates (slower)
   longpole log                       list recent runs
   longpole diff [A B]                compare two runs (default: previous run of the same command)
+  longpole diff --fail-over=N [A B]  also exit 1 when work time grew more than N percent
 `
 
 const (
@@ -370,6 +372,12 @@ func runDiff(ctx context.Context, args []string) int {
 }
 
 func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (exitCode int) {
+	args, limit, gate, err := parseFailOver(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "longpole: %v\n", err)
+		return 2
+	}
+
 	db, err := store.Open(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "longpole: %v\n", err)
@@ -390,6 +398,12 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 			fmt.Fprintf(stderr, "longpole: %v\n", err)
 			return 1
 		}
+		if len(runs) < 2 && gate {
+			// A first CI run has nothing to compare against. Failing it would
+			// block every project on the day it adopts the gate.
+			fmt.Fprintln(stderr, "longpole: no earlier run to compare against; gate skipped")
+			return 0
+		}
 		if len(runs) < 2 {
 			fmt.Fprintf(stderr,
 				"longpole: need two runs to compare, have %d — run a build again\n", len(runs))
@@ -401,6 +415,10 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 				beforeID = run.ID
 				break
 			}
+		}
+		if beforeID == 0 && gate {
+			fmt.Fprintf(stderr, "longpole: no earlier run of %q to compare against; gate skipped\n", runs[0].Command)
+			return 0
 		}
 		if beforeID == 0 {
 			fmt.Fprintf(stderr,
@@ -419,7 +437,7 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 			return 2
 		}
 	default:
-		fmt.Fprint(stderr, "usage: longpole diff [BEFORE AFTER]\n")
+		fmt.Fprint(stderr, "usage: longpole diff [--fail-over=N] [BEFORE AFTER]\n")
 		return 2
 	}
 
@@ -451,7 +469,61 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 		Before: beforeActs, After: afterActs,
 		TopN: 10,
 	}))
+	if !gate {
+		return 0
+	}
+	// A failed build stops early and does less work, so it would make the
+	// next run look like a regression or hide a real one.
+	for _, r := range []store.Run{beforeRun, afterRun} {
+		if r.ExitCode != 0 {
+			fmt.Fprintf(stdout, "  gate skipped: run #%d failed (exit %d)\n\n", r.ID, r.ExitCode)
+			return 0
+		}
+	}
+	if beforeRun.Cores != afterRun.Cores || beforeRun.GoVersion != afterRun.GoVersion {
+		fmt.Fprintf(stdout, "  note: runs differ in machine or toolchain (%d cores %s -> %d cores %s)\n",
+			beforeRun.Cores, beforeRun.GoVersion, afterRun.Cores, afterRun.GoVersion)
+	}
+	out, failed := report.Gate(report.GateInput{
+		BeforeID: beforeRun.ID, AfterID: afterRun.ID,
+		BeforeWork: beforeRun.WorkNs, AfterWork: afterRun.WorkNs,
+		Before: beforeActs, After: afterActs,
+		LimitPct: limit,
+		TopN:     10,
+	})
+	fmt.Fprint(stdout, out)
+	if failed {
+		return 1
+	}
 	return 0
+}
+
+// parseFailOver removes --fail-over=N or --fail-over N from args. N is a
+// percentage, with or without a trailing %.
+func parseFailOver(args []string) (rest []string, limit float64, gate bool, err error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		var val string
+		switch {
+		case a == "--fail-over":
+			if i+1 >= len(args) {
+				return nil, 0, false, fmt.Errorf("--fail-over needs a percentage")
+			}
+			i++
+			val = args[i]
+		case strings.HasPrefix(a, "--fail-over="):
+			val = strings.TrimPrefix(a, "--fail-over=")
+		default:
+			rest = append(rest, a)
+			continue
+		}
+		limit, err = strconv.ParseFloat(strings.TrimSuffix(val, "%"), 64)
+		if err != nil || limit < 0 {
+			return nil, 0, false, fmt.Errorf("--fail-over: %q is not a percentage", val)
+		}
+		gate = true
+	}
+	return rest, limit, gate, nil
 }
 
 func joinArgs(argv []string) string {

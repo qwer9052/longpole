@@ -185,8 +185,12 @@ func migrateActions(db *sql.DB) error {
 // Close releases the database handle.
 func (s *Store) Close() error { return s.db.Close() }
 
-// DefaultPath is where runs are recorded when no override is given.
+// DefaultPath is where runs are recorded. LONGPOLE_DB overrides it so CI can
+// keep history in a directory its cache step restores between jobs.
 func DefaultPath() (string, error) {
+	if p := os.Getenv("LONGPOLE_DB"); p != "" {
+		return p, nil
+	}
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("locate cache directory: %w", err)
