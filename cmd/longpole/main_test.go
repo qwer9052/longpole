@@ -538,3 +538,82 @@ func (s *historyErrorStore) Prune(string, int) error {
 func (s *historyErrorStore) PruneGlobal(int) error {
 	return s.globalPruneErr
 }
+
+func TestRunDiffFailOverGatesOnWorkTime(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		afterWork int64
+		afterExit int
+		want      int
+		wantOut   string
+	}{
+		{"fails when work grew past the limit", []string{"--fail-over=20"}, 15_000_000_000, 0, 1, "over the 20% limit"},
+		{"accepts a separate value and a percent sign", []string{"--fail-over", "20%"}, 15_000_000_000, 0, 1, "over the 20% limit"},
+		{"passes within the limit", []string{"--fail-over=20"}, 11_000_000_000, 0, 0, "within the 20% limit"},
+		{"skips a failed build", []string{"--fail-over=20"}, 1_000_000_000, 2, 0, "gate skipped"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "runs.db")
+			db, err := store.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := store.Run{Scope: "target", Command: "go build ./...", WorkNs: 10_000_000_000}
+			if _, err := db.Save(run, []model.Action{
+				{Package: "a", Kind: model.KindCompile, Ran: true, WorkNs: 10_000_000_000, ActionID: "A"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			run.WorkNs, run.ExitCode = tt.afterWork, tt.afterExit
+			if _, err := db.Save(run, []model.Action{
+				{Package: "a", Kind: model.KindCompile, Ran: true, WorkNs: tt.afterWork, ActionID: "A"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			var stdout, stderr strings.Builder
+			if got := runDiffFrom(path, "target", tt.args, &stdout, &stderr); got != tt.want {
+				t.Fatalf("exit code = %d, want %d; stdout = %q stderr = %q", got, tt.want, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tt.wantOut) {
+				t.Errorf("stdout = %q, want %q", stdout.String(), tt.wantOut)
+			}
+		})
+	}
+}
+
+func TestRunDiffFailOverSkipsWithoutBaseline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Save(store.Run{Scope: "target", Command: "go build ./..."}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if got := runDiffFrom(path, "target", []string{"--fail-over=20"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("a first CI run must not fail the gate: exit %d, stderr = %q", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "gate skipped") {
+		t.Errorf("stderr = %q, want gate-skipped note", stderr.String())
+	}
+}
+
+func TestRunDiffRejectsBadFailOver(t *testing.T) {
+	for _, args := range [][]string{{"--fail-over=abc"}, {"--fail-over"}, {"--fail-over=-5"}} {
+		var stdout, stderr strings.Builder
+		if got := runDiffFrom(filepath.Join(t.TempDir(), "runs.db"), "target", args, &stdout, &stderr); got != 2 {
+			t.Errorf("%v: exit code = %d, want 2", args, got)
+		}
+	}
+}

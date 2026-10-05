@@ -57,6 +57,34 @@ nothing was rebuilt. longpole says what actually happened:
 | `longpole --explain go build ./...` | List conservative candidate roots for rebuilds. Slower. |
 | `longpole log` | List recent runs in this project |
 | `longpole diff [A B]` | Compare two runs, defaulting to the last two |
+| `longpole diff --fail-over=20 [A B]` | Also exit 1 when work time grew more than 20% |
+
+## Gating CI on build regressions
+
+`--fail-over=N` turns `diff` into a check. It compares work time, not wall time,
+because wall time also measures how busy the runner was. A regression must also be
+at least 1s, so small builds do not fail on noise. It never fails a build itself:
+the gate is a separate step, and the wrapped build's exit code is unchanged.
+
+History lives in a SQLite file. Point `LONGPOLE_DB` at a directory your CI cache
+step restores, so each job can compare against the last one:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: .longpole
+    key: longpole-${{ runner.os }}-${{ github.run_id }}
+    restore-keys: longpole-${{ runner.os }}-
+- run: longpole go build ./...
+  env: { LONGPOLE_DB: .longpole/runs.db }
+- run: longpole diff --fail-over=20
+  env: { LONGPOLE_DB: .longpole/runs.db }
+```
+
+The first job has nothing to compare against and passes with a note. A comparison
+with a failed build is skipped, because a build that stopped early did less work.
+Runs are compared within one module and working directory, so keep the checkout
+path stable across jobs.
 
 ## What it measures
 

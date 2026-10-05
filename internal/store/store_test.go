@@ -622,3 +622,15 @@ func TestOpenMigratesLegacyActions(t *testing.T) {
 		t.Errorf("new actions = %#v, want %#v", got, newActions)
 	}
 }
+
+func TestDefaultPathHonorsLongpoleDB(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "ci", "runs.db")
+	t.Setenv("LONGPOLE_DB", want)
+	got, err := DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("DefaultPath() = %q, want %q", got, want)
+	}
+}
