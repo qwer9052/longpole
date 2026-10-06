@@ -58,6 +58,7 @@ nothing was rebuilt. longpole says what actually happened:
 | `longpole log` | List recent runs in this project |
 | `longpole diff [A B]` | Compare two runs, defaulting to the last two |
 | `longpole diff --fail-over=20 [A B]` | Also exit 1 when work time grew more than 20% |
+| `longpole diff --format=markdown` | Print the comparison as Markdown for a PR comment or job summary |
 
 ## Gating CI on build regressions
 

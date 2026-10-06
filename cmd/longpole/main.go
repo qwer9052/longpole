@@ -30,6 +30,7 @@ const usage = `longpole — why was my Go build slow?
   longpole log                       list recent runs
   longpole diff [A B]                compare two runs (default: previous run of the same command)
   longpole diff --fail-over=N [A B]  also exit 1 when work time grew more than N percent
+  longpole diff --format=markdown    print the comparison as Markdown, for PR comments
 `
 
 const (
@@ -381,10 +382,24 @@ func runDiff(ctx context.Context, args []string) int {
 }
 
 func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (exitCode int) {
-	args, limit, gate, err := parseFailOver(args)
+	opts, err := parseDiffFlags(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "longpole: %v\n", err)
 		return 2
+	}
+	args, limit, gate := opts.rest, opts.limit, opts.gate
+	var gateLine string
+	if opts.markdown {
+		// Render as usual, then wrap it, so the Markdown output can never say
+		// something the terminal output does not.
+		var body strings.Builder
+		final := stdout
+		stdout = &body
+		defer func() {
+			if body.Len() > 0 {
+				fmt.Fprint(final, markdownDiff(body.String(), gateLine))
+			}
+		}()
 	}
 
 	db, err := store.Open(path)
@@ -446,7 +461,7 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 			return 2
 		}
 	default:
-		fmt.Fprint(stderr, "usage: longpole diff [--fail-over=N] [BEFORE AFTER]\n")
+		fmt.Fprint(stderr, "usage: longpole diff [--fail-over=N] [--format=markdown] [BEFORE AFTER]\n")
 		return 2
 	}
 
@@ -501,38 +516,71 @@ func runDiffFrom(path, scope string, args []string, stdout, stderr io.Writer) (e
 		TopN:     10,
 	})
 	fmt.Fprint(stdout, out)
+	gateLine = strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
 	if failed {
 		return 1
 	}
 	return 0
 }
 
-// parseFailOver removes --fail-over=N or --fail-over N from args. N is a
-// percentage, with or without a trailing %.
-func parseFailOver(args []string) (rest []string, limit float64, gate bool, err error) {
+type diffFlags struct {
+	rest     []string
+	limit    float64
+	gate     bool
+	markdown bool
+}
+
+// parseDiffFlags removes --fail-over and --format from args. --fail-over takes
+// a percentage, with or without a trailing %.
+func parseDiffFlags(args []string) (diffFlags, error) {
+	var f diffFlags
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		var val string
-		switch {
-		case a == "--fail-over":
+		name, val, hasVal := strings.Cut(a, "=")
+		if name != "--fail-over" && name != "--format" {
+			f.rest = append(f.rest, a)
+			continue
+		}
+		if !hasVal {
 			if i+1 >= len(args) {
-				return nil, 0, false, fmt.Errorf("--fail-over needs a percentage")
+				return diffFlags{}, fmt.Errorf("%s needs a value", name)
 			}
 			i++
 			val = args[i]
-		case strings.HasPrefix(a, "--fail-over="):
-			val = strings.TrimPrefix(a, "--fail-over=")
-		default:
-			rest = append(rest, a)
-			continue
 		}
-		limit, err = strconv.ParseFloat(strings.TrimSuffix(val, "%"), 64)
-		if err != nil || limit < 0 {
-			return nil, 0, false, fmt.Errorf("--fail-over: %q is not a percentage", val)
+		switch name {
+		case "--fail-over":
+			limit, err := strconv.ParseFloat(strings.TrimSuffix(val, "%"), 64)
+			if err != nil || limit < 0 {
+				return diffFlags{}, fmt.Errorf("--fail-over: %q is not a percentage", val)
+			}
+			f.limit, f.gate = limit, true
+		case "--format":
+			switch val {
+			case "text":
+				f.markdown = false
+			case "markdown":
+				f.markdown = true
+			default:
+				return diffFlags{}, fmt.Errorf("--format: %q is not text or markdown", val)
+			}
 		}
-		gate = true
 	}
-	return rest, limit, gate, nil
+	return f, nil
+}
+
+// markdownDiff wraps the terminal diff for a PR comment or a job summary. The
+// gate verdict goes on top because it is what a reviewer reads first.
+func markdownDiff(body, gateLine string) string {
+	var b strings.Builder
+	b.WriteString("### longpole build diff\n\n")
+	if gateLine != "" {
+		fmt.Fprintf(&b, "**%s**\n\n", gateLine)
+	}
+	b.WriteString("```text\n")
+	b.WriteString(strings.Trim(body, "\n"))
+	b.WriteString("\n```\n")
+	return b.String()
 }
 
 func joinArgs(argv []string) string {
