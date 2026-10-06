@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# Attaching binaries to a release is the one write this repository allows CI.
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Cross-compile
+        # Pure Go, so one Linux runner builds every target. Prebuilt binaries
+        # matter most in CI, where go install would recompile SQLite on every
+        # job: about half of longpole's own cold build time.
+        env:
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            name=longpole_${GITHUB_REF_NAME}_${os}_${arch}
+            ext=; [ "$os" = windows ] && ext=.exe
+            mkdir "dist/$name"
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags='-s -w' -o "dist/$name/longpole$ext" ./cmd/longpole
+            cp LICENSE NOTICE README.md "dist/$name/"
+            if [ "$os" = windows ]; then
+              (cd dist && zip -qr "$name.zip" "$name")
+            else
+              tar -C dist -czf "dist/$name.tar.gz" "$name"
+            fi
+            rm -r "dist/$name"
+          done
+          (cd dist && sha256sum * > checksums.txt)
+
+      - name: Attach to the release
+        # Release notes are written by hand, so attach to an existing release
+        # rather than replacing it, and create one only if it is missing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
