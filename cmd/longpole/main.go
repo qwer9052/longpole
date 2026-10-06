@@ -187,7 +187,7 @@ func wrapWith(ctx context.Context, argv []string, explain bool) int {
 	if hashes != nil {
 		blocks = hashes.Blocks()
 	}
-	return finishRunWith(ctx, graphPath, argv, res, persist, os.Stderr, explain, blocks)
+	return finishRunWith(ctx, graphPath, argv, res, persistAs(goVersion), os.Stderr, explain, blocks)
 }
 
 type persistFunc func(context.Context, []string, wrap.Result, model.Summary, []model.Action) (int64, int64, error)
@@ -263,7 +263,16 @@ type runStore interface {
 	PruneGlobal(int) error
 }
 
-func persist(ctx context.Context, argv []string, res wrap.Result, s model.Summary, acts []model.Action) (id, prev int64, err error) {
+// persistAs records runs under the toolchain that actually ran the build. The
+// toolchain that built longpole is often a different release, and recording it
+// would hide a toolchain change, which rebuilds everything.
+func persistAs(goVersion string) persistFunc {
+	return func(ctx context.Context, argv []string, res wrap.Result, s model.Summary, acts []model.Action) (int64, int64, error) {
+		return persist(ctx, argv, res, s, acts, goVersion)
+	}
+}
+
+func persist(ctx context.Context, argv []string, res wrap.Result, s model.Summary, acts []model.Action, goVersion string) (id, prev int64, err error) {
 	path, err := store.DefaultPath()
 	if err != nil {
 		return 0, 0, err
@@ -284,7 +293,7 @@ func persist(ctx context.Context, argv []string, res wrap.Result, s model.Summar
 		Scope:     scope,
 		StartedAt: time.Now().UnixNano(),
 		Command:   joinArgs(argv),
-		GoVersion: runtime.Version(),
+		GoVersion: goVersion,
 		GOOS:      runtime.GOOS,
 		GOARCH:    runtime.GOARCH,
 		Cores:     runtime.GOMAXPROCS(0),
