@@ -639,3 +639,46 @@ func TestPersistRecordsTheToolchainThatRanTheBuild(t *testing.T) {
 		t.Errorf("GoVersion = %q, want the probed toolchain, not the one that built longpole", run.GoVersion)
 	}
 }
+
+func TestRunDiffMarkdownWrapsTheSameReport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := store.Run{Scope: "target", Command: "go build ./...", WorkNs: 10_000_000_000}
+	acts := []model.Action{{Package: "a", Kind: model.KindCompile, Ran: true, WorkNs: 10_000_000_000, ActionID: "A"}}
+	if _, err := db.Save(run, acts); err != nil {
+		t.Fatal(err)
+	}
+	run.WorkNs = 15_000_000_000
+	acts[0].WorkNs = 15_000_000_000
+	if _, err := db.Save(run, acts); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var text, md, stderr strings.Builder
+	if got := runDiffFrom(path, "target", []string{"--fail-over=20"}, &text, &stderr); got != 1 {
+		t.Fatalf("text exit = %d, want 1", got)
+	}
+	if got := runDiffFrom(path, "target", []string{"--fail-over=20", "--format", "markdown"}, &md, &stderr); got != 1 {
+		t.Fatalf("markdown must not change the gate's exit code: got %d", got)
+	}
+	out := md.String()
+	if !strings.HasPrefix(out, "### longpole build diff\n\n**gate  work 10.00s -> 15.00s") {
+		t.Errorf("gate verdict should lead the markdown: %q", out)
+	}
+	if !strings.Contains(out, "```text\n"+strings.Trim(text.String(), "\n")+"\n```\n") {
+		t.Errorf("markdown should carry the text report unchanged:\n%s\n---\n%s", out, text.String())
+	}
+}
+
+func TestRunDiffRejectsUnknownFormat(t *testing.T) {
+	var stdout, stderr strings.Builder
+	if got := runDiffFrom(filepath.Join(t.TempDir(), "runs.db"), "target", []string{"--format=html"}, &stdout, &stderr); got != 2 {
+		t.Errorf("exit code = %d, want 2", got)
+	}
+}
