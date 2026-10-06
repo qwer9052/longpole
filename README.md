@@ -48,6 +48,30 @@ nothing was rebuilt. longpole says what actually happened:
   nothing to optimize — everything came from cache
 ```
 
+## On a real project
+
+prometheus/prometheus, cold cache, 4 cores, Go 1.26.7. The action count, critical path
+and package times match a recount from the raw action graph:
+
+```
+  build: 3198 actions, 1583 ran, 0 cached (0%)        6m19.92s wall
+
+  critical path  2m47.29s of 6m19.92s wall (44%)
+    2m04.06s  github.com/aws/aws-sdk-go-v2/service/ec2
+     12.34s  github.com/prometheus/prometheus/cmd/prometheus (link)
+    + 27 more
+
+  worth a look
+    github.com/aws/aws-sdk-go-v2/service/ec2 is 74% of the critical path; consider splitting this build step
+```
+
+One generated SDK package sets the pace of the whole build. The warm build has a
+second finding that is easy to miss: with nothing to compile, `go build ./...`
+still re-links four binaries, 11 seconds every time.
+
+After editing one file in `util/strutil`, `longpole diff` named it as the root of
+the 34 rebuilt actions.
+
 ## Commands
 
 | Command | What it does |
