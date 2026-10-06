@@ -1,0 +1,96 @@
+name: longpole
+description: Profile a Go build and fail the job when build work regresses.
+author: qwer9052
+branding:
+  icon: clock
+  color: blue
+
+inputs:
+  command:
+    description: The go command to profile.
+    default: go build ./...
+  fail-over:
+    description: Fail when work time grew more than this percentage since the last run. Empty disables the gate.
+    default: ''
+  summary:
+    description: Write the comparison to the job summary as Markdown.
+    default: 'true'
+  version:
+    description: Release to download, such as v0.1.6. Empty uses the release this action was pinned to, or builds from source.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install longpole
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        bin="$RUNNER_TEMP/longpole-bin"
+        mkdir -p "$bin"
+        tag=$VERSION
+        if [ -z "$tag" ] && [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          tag=$ACTION_REF
+        fi
+        os=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]'); [ "$os" = macos ] && os=darwin
+        case "$RUNNER_ARCH" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; *) arch= ;; esac
+        ext=tar.gz; [ "$os" = windows ] && ext=zip
+        installed=
+        if [ -n "$tag" ] && [ -n "$arch" ]; then
+          asset="longpole_${tag}_${os}_${arch}.${ext}"
+          if gh release download "$tag" -R qwer9052/longpole -p "$asset" -D "$RUNNER_TEMP" 2>/dev/null; then
+            if [ "$ext" = zip ]; then unzip -q -o "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP"; else tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP"; fi
+            mv "$RUNNER_TEMP/longpole_${tag}_${os}_${arch}"/longpole* "$bin/"
+            installed=1
+          fi
+        fi
+        if [ -z "$installed" ]; then
+          # No prebuilt binary for this ref: build the exact source the action
+          # was checked out at, so the binary always matches action.yml.
+          echo "longpole: no release binary for '${tag:-$ACTION_REF}'; building from source"
+          CGO_ENABLED=0 go build -C "$GITHUB_ACTION_PATH" -o "$bin/" ./cmd/longpole
+        fi
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "LONGPOLE_DB=$RUNNER_TEMP/longpole-history/runs.db" >> "$GITHUB_ENV"
+
+    - name: Restore run history
+      # A failed job does not save, so a regression never becomes the next
+      # job's baseline.
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/longpole-history
+        key: longpole-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: longpole-${{ runner.os }}-
+
+    - name: Profile
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: |
+        set -f
+        longpole $COMMAND
+
+    - name: Compare with the last run
+      if: inputs.fail-over != '' || inputs.summary == 'true'
+      shell: bash
+      env:
+        FAIL_OVER: ${{ inputs.fail-over }}
+        SUMMARY: ${{ inputs.summary }}
+      run: |
+        set -uo pipefail
+        args=()
+        [ -n "$FAIL_OVER" ] && args+=("--fail-over=$FAIL_OVER")
+        [ "$SUMMARY" = true ] && args+=(--format=markdown)
+        out=$(longpole diff ${args[@]+"${args[@]}"}); code=$?
+        echo "$out"
+        [ "$SUMMARY" = true ] && echo "$out" >> "$GITHUB_STEP_SUMMARY"
+        if [ -z "$FAIL_OVER" ]; then
+          # Without a gate this step only reports. The first run has nothing
+          # to compare against, and that is not a failure.
+          exit 0
+        fi
+        exit $code
