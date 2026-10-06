@@ -118,8 +118,6 @@ go install github.com/qwer9052/longpole/cmd/longpole@latest
 
 ## Known limitations
 
-- The Go version check uses the toolchain that built longpole, not the `go` on
-  your PATH. They are usually the same.
 - Wall time is measured around the `go` process, so it includes go command
   startup that the action graph does not attribute to any action.
 - `--explain` makes the go command print a large volume of diagnostic output.

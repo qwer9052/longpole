@@ -617,3 +617,25 @@ func TestRunDiffRejectsBadFailOver(t *testing.T) {
 		}
 	}
 }
+
+func TestPersistRecordsTheToolchainThatRanTheBuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.db")
+	t.Setenv("LONGPOLE_DB", path)
+	argv := []string{"go", "build", "./..."}
+	id, _, err := persistAs("go1.99.1")(context.Background(), argv, wrap.Result{}, model.Summary{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	run, _, err := db.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.GoVersion != "go1.99.1" {
+		t.Errorf("GoVersion = %q, want the probed toolchain, not the one that built longpole", run.GoVersion)
+	}
+}
