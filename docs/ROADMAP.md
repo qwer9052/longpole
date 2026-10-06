@@ -162,7 +162,9 @@ HASH[build example.com/lab/a]: 2c9680efc7e3447c...
 
 **구현된 부분**: `longpole diff --fail-over=N`이 작업 시간이 N% 넘게 늘면 종료 코드 1을 냅니다. `LONGPOLE_DB`로 이력 파일 위치를 바꿔 CI 캐시에 보관할 수 있습니다. 벽시계가 아니라 작업 시간을 비교하고, 1초 미만 증가는 무시하며, 기준선이 없거나 실패한 빌드와의 비교는 건너뜁니다.
 
-**남은 부분**: PR 코멘트 게시. `diff` 출력을 그대로 붙이면 되지만 GitHub 연동은 별도 제품에 가까워 미룹니다.
+**추가 구현**: `diff --format=markdown`과 GitHub Action(`uses: qwer9052/longpole@vX`)이 비교 결과를 잡 요약에 씁니다.
+
+**남은 부분**: PR에 코멘트를 직접 다는 기능. Markdown 출력을 `gh pr comment`에 넘기면 되므로 내장하지 않습니다.
 
 ---
 

@@ -67,19 +67,28 @@ because wall time also measures how busy the runner was. A regression must also 
 at least 1s, so small builds do not fail on noise. It never fails a build itself:
 the gate is a separate step, and the wrapped build's exit code is unchanged.
 
-History lives in a SQLite file. Point `LONGPOLE_DB` at a directory your CI cache
-step restores, so each job can compare against the last one:
+On GitHub Actions, the action does the wiring: it installs longpole, keeps run
+history in the Actions cache, profiles the build, and writes the comparison to the
+job summary.
 
 ```yaml
-- uses: actions/cache@v4
+- uses: actions/setup-go@v7
+- uses: qwer9052/longpole@v0.1.6
   with:
-    path: .longpole
-    key: longpole-${{ runner.os }}-${{ github.run_id }}
-    restore-keys: longpole-${{ runner.os }}-
-- run: longpole go build ./...
-  env: { LONGPOLE_DB: .longpole/runs.db }
-- run: longpole diff --fail-over=20
-  env: { LONGPOLE_DB: .longpole/runs.db }
+    command: go build ./...   # the default
+    fail-over: 20             # omit to report without gating
+```
+
+It downloads the prebuilt binary for the release it is pinned to, and builds from
+source when there is none. The command is split on spaces, so arguments that
+contain spaces are not supported.
+
+Elsewhere, point `LONGPOLE_DB` at a directory your CI cache restores, and run the
+two steps yourself:
+
+```sh
+LONGPOLE_DB=.longpole/runs.db longpole go build ./...
+LONGPOLE_DB=.longpole/runs.db longpole diff --fail-over=20 --format=markdown
 ```
 
 The first job has nothing to compare against and passes with a note. A comparison
@@ -116,6 +125,9 @@ it never changes your build's output or exit code.
 ```
 go install github.com/qwer9052/longpole/cmd/longpole@latest
 ```
+
+From v0.1.6 on, prebuilt binaries for Linux, macOS and Windows are attached to
+each [release](https://github.com/qwer9052/longpole/releases).
 
 ## Known limitations
 

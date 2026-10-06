@@ -73,3 +73,30 @@ jobs:
             exit 1
           fi
           echo "gofmt: clean"
+
+  action:
+    # Runs the published action against this repository twice: the first run
+    # has no baseline and must pass, the second exercises the gate.
+    name: action (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: First run
+        uses: ./
+        with:
+          fail-over: '50'
+
+      - name: Second run
+        uses: ./
+        with:
+          fail-over: '50'
